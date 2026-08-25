@@ -3,7 +3,7 @@
 
 # Voxy Seed LOD
 
-An unofficial experimental patch for [Voxy](https://github.com/MCRcortex/voxy) that predicts distant Overworld terrain directly from the integrated server's seed-backed `ChunkGenerator`—without requesting or loading every faraway Minecraft chunk.
+An unofficial experimental patch for [Voxy](https://github.com/MCRcortex/voxy) that predicts distant Overworld terrain directly from the integrated server's seed-backed `ChunkGenerator` without requesting or loading every faraway Minecraft chunk.
 
 The goal is simple: fill Voxy's distant horizon quickly enough to be useful at 128–512 chunk distances while keeping ordinary generated chunks authoritative when the player reaches them.
 
@@ -48,7 +48,7 @@ This project is unofficial, unsupported by MCRcortex, and not affiliated with Mo
 - Most land samples require one height query; possible ocean samples add an ocean-floor query.
 - Custom-biome profiles are cached.
 - Biome tags, identifiers, climate, and placed-feature identifiers help infer proxy tree density and species.
-- Common vanilla-block surface themes—grass, snow, stone, sand, gravel, mud, calcite, and basalt—are approximated from biome metadata.
+- Common vanilla-block surface themes such as grass, snow, stone, sand, gravel, mud, calcite, and basalt are approximated from biome metadata.
 
 This is useful for datapacks such as Tectonic, Terralith, and other vanilla-style terrain/biome packs, but it does not execute their complete surface-rule or configured-feature stages. Unusual surfaces and custom blocks may be approximated incorrectly.
 
@@ -138,4 +138,3 @@ Useful contribution areas include:
 - Code cleanup, because the AI has undoubtedly hidden at least one tiny goblin in here
 
 When reporting performance, include CPU, Java version, seed, datapacks, distance, stride, thread count, and whether adaptive quality/smoothing/vegetation were enabled.
-

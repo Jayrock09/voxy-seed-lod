@@ -1,6 +1,6 @@
 # Changelog
 
-## seedlod.5 — current patch
+## seedlod.5: current patch
 
 - Added fast early-exit height sampling for vanilla-style noise datapacks.
 - Added cached datapack biome profiles and placed-feature hints.
@@ -29,4 +29,3 @@
 ## seedlod.1
 
 - Initial experimental seed-backed distant terrain sampler.
-
