@@ -1,0 +1,1061 @@
+diff --git a/gradle.properties b/gradle.properties
+index a25ea295..53665582 100644
+--- a/gradle.properties
++++ b/gradle.properties
+@@ -29,6 +29,6 @@ nvidium_version=0.4.3-beta13-26.1
+ 
+ 
+ # Mod Properties
+-mod_version = 0.2.19-beta
++mod_version = 0.2.19-beta-seedlod.5
+ maven_group = me.cortex
+-archives_base_name = voxy
+\ No newline at end of file
++archives_base_name = voxy
+diff --git a/src/main/java/me/cortex/voxy/client/VoxyClient.java b/src/main/java/me/cortex/voxy/client/VoxyClient.java
+index c0029a7d..a91e7625 100644
+--- a/src/main/java/me/cortex/voxy/client/VoxyClient.java
++++ b/src/main/java/me/cortex/voxy/client/VoxyClient.java
+@@ -6,6 +6,7 @@ import me.cortex.voxy.common.Logger;
+ import me.cortex.voxy.commonImpl.VoxyCommon;
+ import net.fabricmc.api.ClientModInitializer;
+ import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
++import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+ import net.fabricmc.loader.api.FabricLoader;
+ import net.minecraft.client.Minecraft;
+ 
+@@ -66,6 +67,13 @@ public class VoxyClient implements ClientModInitializer {
+     public void onInitializeClient() {
+         DebugEntries.init();
+ 
++        ClientTickEvents.END_CLIENT_TICK.register(client -> {
++            var instance = VoxyCommon.getInstance();
++            if (instance instanceof VoxyClientInstance clientInstance) {
++                clientInstance.tickSeedLod(client);
++            }
++        });
++
+         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> {
+             if (VoxyCommon.isAvailable()) {
+                 dispatcher.register(VoxyCommands.register());
+@@ -92,4 +100,4 @@ public class VoxyClient implements ClientModInitializer {
+     public static boolean disableSodiumChunkRender() {
+         return false;// getOcclusionDebugState() != 0;
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/src/main/java/me/cortex/voxy/client/VoxyClientInstance.java b/src/main/java/me/cortex/voxy/client/VoxyClientInstance.java
+index 2dab3784..fb0f1e73 100644
+--- a/src/main/java/me/cortex/voxy/client/VoxyClientInstance.java
++++ b/src/main/java/me/cortex/voxy/client/VoxyClientInstance.java
+@@ -4,6 +4,7 @@ import me.cortex.voxy.client.compat.FlashbackCompat;
+ import me.cortex.voxy.client.config.VoxyConfig;
+ import me.cortex.voxy.client.core.RenderResourceReuse;
+ import me.cortex.voxy.client.mixin.sodium.AccessorSodiumWorldRenderer;
++import me.cortex.voxy.client.seedlod.SeedLodManager;
+ import me.cortex.voxy.common.Logger;
+ import me.cortex.voxy.common.StorageConfigUtil;
+ import me.cortex.voxy.common.config.ConfigBuildCtx;
+@@ -22,6 +23,7 @@ public class VoxyClientInstance extends VoxyInstance {
+     private final Config config;
+     private final Path basePath;
+     private final boolean noIngestOverride;
++    private final SeedLodManager seedLodManager;
+ 
+     public VoxyClientInstance() {
+         {
+@@ -34,9 +36,14 @@ public class VoxyClientInstance extends VoxyInstance {
+             this.config = StorageConfigUtil.getCreateStorageConfig(Config.class, c->c.version==1&&c.sectionStorageConfig!=null, ()->DEFAULT_STORAGE_CONFIG, basePath);
+         }
+         super();
++        this.seedLodManager = new SeedLodManager();
+         this.updateDedicatedThreads();
+     }
+ 
++    public void tickSeedLod(Minecraft client) {
++        this.seedLodManager.tick(client);
++    }
++
+     @Override
+     protected boolean shouldCreateInstance() {
+         return !this.config.disabled;
+@@ -84,6 +91,7 @@ public class VoxyClientInstance extends VoxyInstance {
+ 
+     @Override
+     public void shutdown() {
++        this.seedLodManager.shutdown();
+         super.shutdown();
+         //Free the render resources cache since the entire instance is freed
+         RenderResourceReuse.clearResources();
+diff --git a/src/main/java/me/cortex/voxy/client/config/VoxyConfig.java b/src/main/java/me/cortex/voxy/client/config/VoxyConfig.java
+index b2f5eefb..7f11c7f6 100644
+--- a/src/main/java/me/cortex/voxy/client/config/VoxyConfig.java
++++ b/src/main/java/me/cortex/voxy/client/config/VoxyConfig.java
+@@ -35,6 +35,14 @@ public class VoxyConfig {
+     public float subDivisionSize = 64;
+     public String fogMode;
+     public boolean dontUseSodiumBuilderThreads = false;
++    public boolean seedLodEnabled = false;
++    public int seedLodRenderDistance = 192;
++    public int seedLodSampleStride = 4;
++    public boolean seedLodAdaptiveQuality = true;
++    public boolean seedLodSmoothing = true;
++    public boolean seedLodVegetation = true;
++    public boolean seedLodFastDatapackSampling = true;
++    public int seedLodThreads = Math.max(1, Math.min(2, CpuLayout.getCoreCount()/4));
+     public String ssaoMode;
+ 
+     public SSAO.SSAOMode getSSAOMode() {
+diff --git a/src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java b/src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java
+index d456e55c..3ab40518 100644
+--- a/src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java
++++ b/src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java
+@@ -77,6 +77,51 @@ public class VoxyConfigMenu implements ConfigEntryPoint {
+                                         "voxy:ingest_enabled",
+                                         Component.translatable("voxy.config.general.ingest"),
+                                         ()->CFG.ingestEnabled, v->CFG.ingestEnabled=v)
++                        ), new Group(
++                                new BoolOption(
++                                        "voxy:seed_lod_enabled",
++                                        Component.translatable("voxy.config.general.seed_lod_enabled"),
++                                        ()->CFG.seedLodEnabled, v->CFG.seedLodEnabled=v),
++                                new IntOption(
++                                        "voxy:seed_lod_distance",
++                                        Component.translatable("voxy.config.general.seed_lod_distance"),
++                                        ()->CFG.seedLodRenderDistance, v->CFG.seedLodRenderDistance=v,
++                                        new Range(32, 512, 16))
++                                        .setImpact(OptionImpact.HIGH),
++                                new IntOption(
++                                        "voxy:seed_lod_stride",
++                                        Component.translatable("voxy.config.general.seed_lod_stride"),
++                                        ()->Integer.numberOfTrailingZeros(Math.max(2, CFG.seedLodSampleStride)),
++                                        v->CFG.seedLodSampleStride=1<<v,
++                                        new Range(1, 3, 1))
++                                        .setFormatter(v->Component.literal(Integer.toString(1<<v)))
++                                        .setImpact(OptionImpact.HIGH),
++                                new BoolOption(
++                                        "voxy:seed_lod_adaptive_quality",
++                                        Component.translatable("voxy.config.general.seed_lod_adaptive_quality"),
++                                        ()->CFG.seedLodAdaptiveQuality, v->CFG.seedLodAdaptiveQuality=v)
++                                        .setImpact(OptionImpact.HIGH),
++                                new BoolOption(
++                                        "voxy:seed_lod_smoothing",
++                                        Component.translatable("voxy.config.general.seed_lod_smoothing"),
++                                        ()->CFG.seedLodSmoothing, v->CFG.seedLodSmoothing=v)
++                                        .setImpact(OptionImpact.MEDIUM),
++                                new BoolOption(
++                                        "voxy:seed_lod_vegetation",
++                                        Component.translatable("voxy.config.general.seed_lod_vegetation"),
++                                        ()->CFG.seedLodVegetation, v->CFG.seedLodVegetation=v)
++                                        .setImpact(OptionImpact.MEDIUM),
++                                new BoolOption(
++                                        "voxy:seed_lod_fast_datapack_sampling",
++                                        Component.translatable("voxy.config.general.seed_lod_fast_datapack_sampling"),
++                                        ()->CFG.seedLodFastDatapackSampling, v->CFG.seedLodFastDatapackSampling=v)
++                                        .setImpact(OptionImpact.HIGH),
++                                new IntOption(
++                                        "voxy:seed_lod_threads",
++                                        Component.translatable("voxy.config.general.seed_lod_threads"),
++                                        ()->CFG.seedLodThreads, v->CFG.seedLodThreads=v,
++                                        new Range(1, Math.max(1, CpuLayout.getCoreCount()), 1))
++                                        .setImpact(OptionImpact.HIGH)
+                         )
+                 ).setEnabler("voxy:enabled"),
+                 new Page(Component.translatable("voxy.config.rendering"),
+diff --git a/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java
+new file mode 100644
+index 00000000..c713695d
+--- /dev/null
++++ b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java
+@@ -0,0 +1,848 @@
++package me.cortex.voxy.client.seedlod;
++
++import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
++import me.cortex.voxy.client.config.VoxyConfig;
++import me.cortex.voxy.common.Logger;
++import me.cortex.voxy.common.voxelization.VoxelizedSection;
++import me.cortex.voxy.common.voxelization.WorldVoxilizedSectionMipper;
++import me.cortex.voxy.common.world.WorldEngine;
++import me.cortex.voxy.common.world.WorldSection;
++import me.cortex.voxy.common.world.WorldUpdater;
++import me.cortex.voxy.common.world.other.Mapper;
++import me.cortex.voxy.commonImpl.WorldIdentifier;
++import net.minecraft.client.Minecraft;
++import net.minecraft.core.Holder;
++import net.minecraft.core.QuartPos;
++import net.minecraft.resources.ResourceKey;
++import net.minecraft.server.level.ServerLevel;
++import net.minecraft.tags.BiomeTags;
++import net.minecraft.world.level.Level;
++import net.minecraft.world.level.NoiseColumn;
++import net.minecraft.world.level.biome.Biome;
++import net.minecraft.world.level.block.Blocks;
++import net.minecraft.world.level.block.state.BlockState;
++import net.minecraft.world.level.chunk.ChunkGenerator;
++import net.minecraft.world.level.levelgen.Heightmap;
++import net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator;
++import net.minecraft.world.level.levelgen.RandomState;
++
++import java.util.Arrays;
++import java.util.Locale;
++import java.util.Set;
++import java.util.concurrent.ConcurrentHashMap;
++import java.util.concurrent.ExecutorService;
++import java.util.concurrent.Executors;
++import java.util.concurrent.RejectedExecutionException;
++import java.util.concurrent.ThreadFactory;
++import java.util.concurrent.atomic.AtomicInteger;
++
++/**
++ * Produces an approximate terrain-and-vegetation Voxy cache directly from the integrated
++ * server's seed-backed chunk generator. It never asks Minecraft to create or
++ * load a chunk. Existing Voxy voxels are treated as authoritative, so ordinary
++ * chunk ingest replaces (and is never replaced by) these predictions.
++ */
++public final class SeedLodManager {
++    private static final int MAX_PENDING_TASKS = 256;
++    private static final int MAX_ENQUEUE_PER_TICK = 32;
++    private static final int MAX_SCAN_PER_TICK = 4096;
++    private static final int RECENTER_DISTANCE = 8;
++    // Voxy currently leaves the low 27 bits unused. Marking predictions lets a
++    // later seed pass replace them without ever replacing authoritative chunks.
++    private static final long PREDICTION_MARKER = 1L;
++
++    private final ExecutorService executor;
++    private final AtomicInteger pendingTasks = new AtomicInteger();
++    // Smallest planned stride per chunk. Moving toward an existing prediction
++    // upgrades it, while moving away never wastes work downgrading it.
++    private final ConcurrentHashMap<Long, Integer> plannedStrides = new ConcurrentHashMap<>();
++
++    private volatile Binding binding;
++    private volatile int playerChunkX;
++    private volatile int playerChunkZ;
++    private volatile int innerRadius;
++
++    private int scanCenterX;
++    private int scanCenterZ;
++    private long spiralIndex;
++    private boolean scanInitialized;
++    private boolean stopped;
++
++    public SeedLodManager() {
++        int threads = Math.max(1, VoxyConfig.CONFIG.seedLodThreads);
++        AtomicInteger threadNumber = new AtomicInteger();
++        ThreadFactory factory = runnable -> {
++            Thread thread = new Thread(runnable, "Voxy seed LOD " + threadNumber.incrementAndGet());
++            thread.setDaemon(true);
++            thread.setPriority(Thread.MIN_PRIORITY);
++            return thread;
++        };
++        this.executor = Executors.newFixedThreadPool(threads, factory);
++    }
++
++    public void tick(Minecraft client) {
++        if (this.stopped || !VoxyConfig.CONFIG.seedLodEnabled || client.level == null || client.player == null) {
++            return;
++        }
++
++        // A remote server does not send its world seed or generator state to the client.
++        var integratedServer = client.getSingleplayerServer();
++        if (integratedServer == null || client.level.dimension() != Level.OVERWORLD) {
++            return;
++        }
++
++        ServerLevel serverLevel = integratedServer.getLevel(client.level.dimension());
++        WorldIdentifier identifier = WorldIdentifier.of(client.level);
++        if (serverLevel == null || identifier == null) {
++            return;
++        }
++
++        WorldEngine world = identifier.getOrCreateEngine();
++        if (world == null) {
++            return;
++        }
++
++        Binding current = this.binding;
++        if (current == null || current.level != serverLevel || current.world != world) {
++            var chunkSource = serverLevel.getChunkSource();
++            current = new Binding(serverLevel, world, chunkSource.getGenerator(), chunkSource.randomState(),
++                    serverLevel.getSeed());
++            this.binding = current;
++            this.plannedStrides.clear();
++            this.scanInitialized = false;
++        }
++
++        var playerChunk = client.player.chunkPosition();
++        this.playerChunkX = playerChunk.x();
++        this.playerChunkZ = playerChunk.z();
++        // Slightly overlap Minecraft's render distance. Existing-data detection
++        // keeps this safe and avoids exposing an empty ring during chunk fades.
++        this.innerRadius = Math.max(4, client.options.getEffectiveRenderDistance() - 2);
++
++        if (!this.scanInitialized
++                || Math.abs(this.playerChunkX - this.scanCenterX) >= RECENTER_DISTANCE
++                || Math.abs(this.playerChunkZ - this.scanCenterZ) >= RECENTER_DISTANCE) {
++            this.scanCenterX = this.playerChunkX;
++            this.scanCenterZ = this.playerChunkZ;
++            this.spiralIndex = 0;
++            this.scanInitialized = true;
++        }
++
++        int targetRadius = Math.max(32, VoxyConfig.CONFIG.seedLodRenderDistance);
++        if (targetRadius <= this.innerRadius) {
++            return;
++        }
++        int enqueued = 0;
++        int scanned = 0;
++        while (this.pendingTasks.get() < MAX_PENDING_TASKS
++                && enqueued < MAX_ENQUEUE_PER_TICK
++                && scanned++ < MAX_SCAN_PER_TICK) {
++            Offset offset = squareSpiral(this.spiralIndex++);
++            int radius = Math.max(Math.abs(offset.x), Math.abs(offset.z));
++            if (radius > targetRadius) {
++                this.spiralIndex = 0;
++                break;
++            }
++
++            int distanceSquared = offset.x * offset.x + offset.z * offset.z;
++            if (distanceSquared < this.innerRadius * this.innerRadius
++                    || distanceSquared > targetRadius * targetRadius) {
++                continue;
++            }
++
++            int chunkX = this.scanCenterX + offset.x;
++            int chunkZ = this.scanCenterZ + offset.z;
++            long key = net.minecraft.world.level.ChunkPos.pack(chunkX, chunkZ);
++            int stride = strideForDistance(distanceSquared, this.innerRadius, targetRadius);
++            Integer previousStride = this.plannedStrides.get(key);
++            if (previousStride != null && previousStride <= stride) {
++                continue;
++            }
++            this.plannedStrides.put(key, stride);
++
++            this.submit(current, key, chunkX, chunkZ, stride, previousStride);
++            enqueued++;
++        }
++    }
++
++    private void submit(Binding taskBinding, long key, int chunkX, int chunkZ, int stride,
++                        Integer previousStride) {
++        this.pendingTasks.incrementAndGet();
++        try {
++            this.executor.execute(() -> {
++                boolean keepSeen = true;
++                boolean acquired = false;
++                try {
++                    if (this.binding != taskBinding || !VoxyConfig.CONFIG.seedLodEnabled || !taskBinding.world.isLive()) {
++                        return;
++                    }
++                    if (!Integer.valueOf(stride).equals(this.plannedStrides.get(key))) {
++                        return;
++                    }
++                    taskBinding.world.acquireRef();
++                    acquired = true;
++
++                    int dx = chunkX - this.playerChunkX;
++                    int dz = chunkZ - this.playerChunkZ;
++                    int inner = this.innerRadius;
++                    if (dx * dx + dz * dz < inner * inner) {
++                        return;
++                    }
++
++                    generateChunk(taskBinding, key, chunkX, chunkZ, stride);
++                } catch (Throwable throwable) {
++                    keepSeen = false;
++                    Logger.error("Seed LOD generation failed for chunk " + chunkX + ", " + chunkZ, throwable);
++                } finally {
++                    if (acquired && taskBinding.world.isLive()) {
++                        taskBinding.world.releaseRef();
++                    }
++                    if (!keepSeen && this.binding == taskBinding
++                            && Integer.valueOf(stride).equals(this.plannedStrides.get(key))) {
++                        if (previousStride == null) {
++                            this.plannedStrides.remove(key, stride);
++                        } else {
++                            this.plannedStrides.replace(key, stride, previousStride);
++                        }
++                    }
++                    this.pendingTasks.decrementAndGet();
++                }
++            });
++        } catch (RejectedExecutionException ignored) {
++            this.pendingTasks.decrementAndGet();
++            if (previousStride == null) {
++                this.plannedStrides.remove(key, stride);
++            } else {
++                this.plannedStrides.replace(key, stride, previousStride);
++            }
++        }
++    }
++
++    private void generateChunk(Binding binding, long key, int chunkX, int chunkZ, int stride) {
++        int cells = 16 / stride;
++        int sampleWidth = cells + 2;
++        Sample[] samples = new Sample[sampleWidth * sampleWidth];
++        int minY = binding.level.getMinY();
++        int maxY = binding.level.getMaxY();
++
++        // Include a one-cell halo so skirts agree across chunk boundaries.
++        for (int cellZ = -1; cellZ <= cells; cellZ++) {
++            for (int cellX = -1; cellX <= cells; cellX++) {
++                int blockX = (chunkX << 4) + cellX * stride + stride / 2;
++                int blockZ = (chunkZ << 4) + cellZ * stride + stride / 2;
++                samples[(cellZ + 1) * sampleWidth + cellX + 1] =
++                        sample(binding, blockX, blockZ, minY, maxY);
++            }
++        }
++
++        Mapper mapper = binding.world.getMapper();
++        var sections = new Int2ObjectOpenHashMap<VoxelizedSection>();
++        Sample[] columns = new Sample[16 * 16];
++        for (int localZ = 0; localZ < 16; localZ++) {
++            for (int localX = 0; localX < 16; localX++) {
++                Sample terrain = terrainSample(samples, sampleWidth, stride, localX, localZ,
++                        VoxyConfig.CONFIG.seedLodSmoothing);
++                columns[(localZ << 4) | localX] = terrain;
++                if (terrain.surfaceY < minY) {
++                    continue;
++                }
++
++                int sampleX = Math.min(cells, localX / stride + 1);
++                int sampleZ = Math.min(cells, localZ / stride + 1);
++                int bottomY = Math.max(minY, Math.min(terrain.floorY - stride + 1,
++                        lowestNeighborFloor(samples, sampleWidth, sampleX, sampleZ, terrain.floorY)));
++                if (terrain.isOcean()) {
++                    long stoneId = prediction(mapper.getBaseId((byte) 15,
++                            Blocks.STONE.defaultBlockState(), terrain.biome));
++                    putColumn(sections, chunkX, chunkZ, localX, localZ,
++                            bottomY, terrain.floorY - 1, stoneId);
++
++                    long floorId = prediction(mapper.getBaseId((byte) 15,
++                            terrain.floorBlock, terrain.biome));
++                    putColumn(sections, chunkX, chunkZ, localX, localZ,
++                            terrain.floorY, terrain.floorY, floorId);
++
++                    long waterId = prediction(mapper.getBaseId((byte) 15,
++                            Blocks.WATER.defaultBlockState(), terrain.biome));
++                    putColumn(sections, chunkX, chunkZ, localX, localZ,
++                            terrain.floorY + 1, terrain.surfaceY, waterId);
++                } else {
++                    long stoneId = prediction(mapper.getBaseId((byte) 15,
++                            Blocks.STONE.defaultBlockState(), terrain.biome));
++                    putColumn(sections, chunkX, chunkZ, localX, localZ,
++                            bottomY, terrain.surfaceY - 1, stoneId);
++
++                    long surfaceId = prediction(mapper.getBaseId((byte) 15,
++                            terrain.surfaceBlock, terrain.biome));
++                    putColumn(sections, chunkX, chunkZ, localX, localZ,
++                            terrain.surfaceY, terrain.surfaceY, surfaceId);
++                }
++            }
++        }
++
++        if (VoxyConfig.CONFIG.seedLodVegetation) {
++            addVegetation(binding, mapper, sections, chunkX, chunkZ, columns, maxY);
++        }
++
++        if (sections.isEmpty()
++                || !Integer.valueOf(stride).equals(this.plannedStrides.get(key))
++                || hasExistingData(binding.world, chunkX, chunkZ, sections.keySet())) {
++            return;
++        }
++
++        for (VoxelizedSection section : sections.values()) {
++            WorldVoxilizedSectionMipper.mipSection(section, mapper);
++            WorldUpdater.insertUpdate(binding.world, section);
++        }
++    }
++
++    private static Sample sample(Binding binding, int blockX, int blockZ, int minY, int maxY) {
++        if (binding.fastHeightSampling && VoxyConfig.CONFIG.seedLodFastDatapackSampling) {
++            int surfaceY = binding.generator.getBaseHeight(blockX, blockZ,
++                    Heightmap.Types.WORLD_SURFACE_WG, binding.level, binding.randomState) - 1;
++            // Above sea level the world-surface hit is necessarily solid, so a
++            // second density-column walk would return the same value. Low terrain
++            // still asks for the ocean floor to distinguish water from land.
++            int floorY = surfaceY >= binding.generator.getSeaLevel() ? surfaceY
++                    : binding.generator.getBaseHeight(blockX, blockZ,
++                    Heightmap.Types.OCEAN_FLOOR_WG, binding.level, binding.randomState) - 1;
++            int biomeY = Math.max(minY, floorY);
++            Holder<Biome> biome = binding.generator.getBiomeSource().getNoiseBiome(
++                    QuartPos.fromBlock(blockX), QuartPos.fromBlock(biomeY), QuartPos.fromBlock(blockZ),
++                    binding.randomState.sampler());
++            boolean ocean = surfaceY > floorY;
++            SurfaceKey key = new SurfaceKey(biomeId(biome), Math.floorDiv(floorY, 32), ocean);
++            SurfaceMaterial material = binding.surfaceMaterials.computeIfAbsent(key,
++                    ignored -> inferSurfaceMaterial(biome, floorY, ocean));
++            return new Sample(surfaceY, floorY, biome, material.surface, material.floor);
++        }
++
++        NoiseColumn column = binding.generator.getBaseColumn(blockX, blockZ, binding.level, binding.randomState);
++        int surfaceY = minY - 1;
++        int floorY = minY - 1;
++
++        for (int y = maxY - 1; y >= minY; y--) {
++            BlockState state = column.getBlock(y);
++            if (!state.isAir()) {
++                surfaceY = y;
++                break;
++            }
++        }
++
++        for (int y = surfaceY; y >= minY; y--) {
++            BlockState state = column.getBlock(y);
++            if (!state.isAir() && state.getFluidState().isEmpty()) {
++                floorY = y;
++                break;
++            }
++        }
++
++        int biomeY = Math.max(minY, floorY);
++        Holder<Biome> biome = binding.generator.getBiomeSource().getNoiseBiome(
++                QuartPos.fromBlock(blockX), QuartPos.fromBlock(biomeY), QuartPos.fromBlock(blockZ),
++                binding.randomState.sampler());
++        if (floorY < minY) {
++            return new Sample(surfaceY, floorY, biome,
++                    fallbackSurfaceBlock(biome), fallbackOceanFloorBlock(biome));
++        }
++        if (binding.fastHeightSampling) {
++            SurfaceMaterial material = inferSurfaceMaterial(biome, floorY, surfaceY > floorY);
++            return new Sample(surfaceY, floorY, biome, material.surface, material.floor);
++        }
++        BlockState floorBlock = validSolid(column.getBlock(floorY))
++                ? column.getBlock(floorY) : fallbackOceanFloorBlock(biome);
++        BlockState surfaceBlock = surfaceY == floorY && validSolid(column.getBlock(surfaceY))
++                ? column.getBlock(surfaceY) : fallbackSurfaceBlock(biome);
++        return new Sample(surfaceY, floorY, biome, surfaceBlock, floorBlock);
++    }
++
++    private static boolean validSolid(BlockState state) {
++        return state != null && !state.isAir() && state.getFluidState().isEmpty();
++    }
++
++    private static String biomeId(Holder<Biome> biome) {
++        return biome.unwrapKey().map(ResourceKey::identifier).map(Object::toString)
++                .orElseGet(() -> "direct:" + System.identityHashCode(biome.value()));
++    }
++
++    private static SurfaceMaterial inferSurfaceMaterial(Holder<Biome> biome, int floorY, boolean ocean) {
++        String path = biome.unwrapKey().map(ResourceKey::identifier).map(id -> id.getPath())
++                .orElse("").toLowerCase(Locale.ROOT);
++        BlockState floor = fallbackOceanFloorBlock(biome);
++        if (path.contains("mud") || path.contains("mangrove")) floor = Blocks.MUD.defaultBlockState();
++        else if (path.contains("gravel") || path.contains("rocky")) floor = Blocks.GRAVEL.defaultBlockState();
++
++        BlockState surface;
++        if (path.contains("calcite")) surface = Blocks.CALCITE.defaultBlockState();
++        else if (path.contains("basalt") || path.contains("volcan")) surface = Blocks.BASALT.defaultBlockState();
++        else if (path.contains("stony") || path.contains("rocky") || path.contains("crag")) {
++            surface = Blocks.STONE.defaultBlockState();
++        } else if (path.contains("mud") || path.contains("mangrove")) surface = Blocks.MUD.defaultBlockState();
++        else if (path.contains("snow") || path.contains("frozen") || path.contains("ice")
++                || (biome.value().getBaseTemperature() < 0.15F && floorY > 80)) {
++            surface = Blocks.SNOW_BLOCK.defaultBlockState();
++        } else {
++            surface = fallbackSurfaceBlock(biome);
++        }
++        return new SurfaceMaterial(surface, ocean ? floor : surface);
++    }
++
++    private static BlockState fallbackSurfaceBlock(Holder<Biome> biome) {
++        String path = biome.unwrapKey().map(ResourceKey::identifier).map(id -> id.getPath()).orElse("");
++        if (biome.is(BiomeTags.IS_BADLANDS) || path.contains("badlands")) {
++            return Blocks.RED_SAND.defaultBlockState();
++        }
++        if (biome.is(BiomeTags.IS_BEACH) || path.contains("desert") || path.contains("beach")) {
++            return Blocks.SAND.defaultBlockState();
++        }
++        if (path.contains("snow") || path.contains("frozen") || path.contains("ice")) {
++            return Blocks.SNOW_BLOCK.defaultBlockState();
++        }
++        if (path.contains("mushroom")) {
++            return Blocks.MYCELIUM.defaultBlockState();
++        }
++        return Blocks.GRASS_BLOCK.defaultBlockState();
++    }
++
++    private static BlockState fallbackOceanFloorBlock(Holder<Biome> biome) {
++        String path = biome.unwrapKey().map(ResourceKey::identifier).map(id -> id.getPath()).orElse("");
++        if (path.contains("cold") || path.contains("frozen")) {
++            return Blocks.GRAVEL.defaultBlockState();
++        }
++        return Blocks.SAND.defaultBlockState();
++    }
++
++    private static Sample terrainSample(Sample[] samples, int width, int stride, int localX, int localZ,
++                                        boolean smooth) {
++        int nearestX = Math.min(width - 2, localX / stride + 1);
++        int nearestZ = Math.min(width - 2, localZ / stride + 1);
++        if (!smooth) {
++            return samples[nearestZ * width + nearestX];
++        }
++
++        int scaledX = localX + stride / 2;
++        int scaledZ = localZ + stride / 2;
++        int leftX = scaledX / stride;
++        int leftZ = scaledZ / stride;
++        int fractionX = scaledX % stride;
++        int fractionZ = scaledZ % stride;
++        Sample s00 = samples[leftZ * width + leftX];
++        Sample s10 = samples[leftZ * width + leftX + 1];
++        Sample s01 = samples[(leftZ + 1) * width + leftX];
++        Sample s11 = samples[(leftZ + 1) * width + leftX + 1];
++
++        int minSurface = Math.min(Math.min(s00.surfaceY, s10.surfaceY), Math.min(s01.surfaceY, s11.surfaceY));
++        int maxSurface = Math.max(Math.max(s00.surfaceY, s10.surfaceY), Math.max(s01.surfaceY, s11.surfaceY));
++        int biomeX = fractionX * 2 >= stride ? leftX + 1 : leftX;
++        int biomeZ = fractionZ * 2 >= stride ? leftZ + 1 : leftZ;
++        Sample nearest = samples[biomeZ * width + biomeX];
++
++        // Large changes are likely cliffs or sharp peaks. Ease the interpolation
++        // toward a steep S-curve instead of switching to a whole nearest-sample
++        // plate; that keeps cliffs sharp without creating stride-sized towers.
++        int heightRange = maxSurface - minSurface;
++        fractionX = slopeAwareFraction(fractionX, stride, heightRange);
++        fractionZ = slopeAwareFraction(fractionZ, stride, heightRange);
++
++        int surfaceY = bilinear(s00.surfaceY, s10.surfaceY, s01.surfaceY, s11.surfaceY,
++                fractionX, fractionZ, stride);
++        int floorY = Math.min(surfaceY, bilinear(s00.floorY, s10.floorY, s01.floorY, s11.floorY,
++                fractionX, fractionZ, stride));
++        return new Sample(surfaceY, floorY, nearest.biome, nearest.surfaceBlock, nearest.floorBlock);
++    }
++
++    private static int slopeAwareFraction(int fraction, int stride, int heightRange) {
++        int threshold = Math.max(8, stride * 2);
++        if (heightRange <= threshold || fraction == 0) {
++            return fraction;
++        }
++        double linear = fraction / (double) stride;
++        double eased = linear * linear * (3.0 - 2.0 * linear);
++        double strength = Math.min(1.0, (heightRange - threshold) / (double) (stride * 4));
++        return (int) Math.round((linear + (eased - linear) * strength) * stride);
++    }
++
++    private static int bilinear(int v00, int v10, int v01, int v11, int fractionX, int fractionZ,
++                                int stride) {
++        int inverseX = stride - fractionX;
++        int inverseZ = stride - fractionZ;
++        long value = (long) v00 * inverseX * inverseZ
++                + (long) v10 * fractionX * inverseZ
++                + (long) v01 * inverseX * fractionZ
++                + (long) v11 * fractionX * fractionZ;
++        long divisor = (long) stride * stride;
++        return (int) Math.floorDiv(value + divisor / 2, divisor);
++    }
++
++    private static void addVegetation(Binding binding, Mapper mapper,
++                                      Int2ObjectOpenHashMap<VoxelizedSection> sections,
++                                      int chunkX, int chunkZ, Sample[] columns, int maxY) {
++        // A world-space blue-noise-like distribution replaces the old four
++        // fixed chunk quadrants. Local hash minima keep trees separated without
++        // exposing rows or chunk-aligned stripes.
++        for (int localZ = 3; localZ <= 12; localZ++) {
++            for (int localX = 3; localX <= 12; localX++) {
++                int blockX = (chunkX << 4) + localX;
++                int blockZ = (chunkZ << 4) + localZ;
++                long spatialHash = treeSpatialHash(binding.seed, blockX, blockZ);
++                if (!isLocalTreeMinimum(binding.seed, blockX, blockZ, spatialHash)) {
++                    continue;
++                }
++
++                long random = mix64(spatialHash ^ 0xD1B54A32D192ED03L);
++                Sample ground = columns[(localZ << 4) | localX];
++                if (ground == null || ground.isOcean() || ground.surfaceY + 14 >= maxY) {
++                    continue;
++                }
++                BiomeProfile profile = biomeProfile(binding, ground.biome);
++                if ((random & 0xFF) >= profile.treeChance) {
++                    continue;
++                }
++
++                int height = profile.style.baseHeight + (int) ((random >>> 20) & 3);
++                placeTree(mapper, sections, chunkX, chunkZ, localX, ground.surfaceY, localZ,
++                        height, profile.style, ground.biome, random);
++            }
++        }
++    }
++
++    private static long treeSpatialHash(long seed, int blockX, int blockZ) {
++        return mix64(seed
++                ^ ((long) blockX * 0x9E3779B97F4A7C15L)
++                ^ ((long) blockZ * 0xC2B2AE3D27D4EB4FL));
++    }
++
++    private static boolean isLocalTreeMinimum(long seed, int blockX, int blockZ, long centerHash) {
++        for (int z = blockZ - 2; z <= blockZ + 2; z++) {
++            for (int x = blockX - 2; x <= blockX + 2; x++) {
++                if ((x != blockX || z != blockZ)
++                        && Long.compareUnsigned(treeSpatialHash(seed, x, z), centerHash) < 0) {
++                    return false;
++                }
++            }
++        }
++        return true;
++    }
++
++    private static BiomeProfile biomeProfile(Binding binding, Holder<Biome> biome) {
++        return binding.biomeProfiles.computeIfAbsent(biomeId(biome), ignored -> buildBiomeProfile(biome));
++    }
++
++    private static BiomeProfile buildBiomeProfile(Holder<Biome> biome) {
++        String path = biome.unwrapKey().map(ResourceKey::identifier).map(id -> id.getPath()).orElse("");
++        StringBuilder featureHints = new StringBuilder(path);
++        try {
++            for (var featureSet : biome.value().getGenerationSettings().features()) {
++                for (var feature : featureSet) {
++                    feature.unwrapKey().map(ResourceKey::identifier).ifPresent(id ->
++                            featureHints.append(' ').append(id.getNamespace()).append(':').append(id.getPath()));
++                }
++            }
++        } catch (RuntimeException ignored) {
++            // A malformed or unusually dynamic datapack should not disable the
++            // terrain sampler; path/tags remain a useful fallback.
++        }
++        String hints = featureHints.toString().toLowerCase(Locale.ROOT);
++        boolean advertisesTrees = hints.contains("tree") || hints.contains("forest")
++                || hints.contains("wood") || hints.contains("grove");
++
++        int chance;
++        if (biome.is(BiomeTags.IS_OCEAN) || biome.is(BiomeTags.IS_BEACH)
++                || biome.is(BiomeTags.IS_BADLANDS) || path.contains("desert")
++                || path.contains("mushroom") || path.contains("river")) {
++            chance = 0;
++        } else if (biome.is(BiomeTags.IS_JUNGLE) || hints.contains("rainforest")) {
++            chance = 230;
++        } else if (hints.contains("dark_forest")) {
++            chance = 225;
++        } else if (biome.is(BiomeTags.IS_FOREST) || hints.contains("forest")) {
++            chance = 205;
++        } else if (biome.is(BiomeTags.IS_TAIGA) || hints.contains("taiga") || hints.contains("grove")) {
++            chance = 190;
++        } else if (hints.contains("swamp") || hints.contains("mangrove")) {
++            chance = 150;
++        } else if (biome.is(BiomeTags.IS_SAVANNA) || hints.contains("savanna")) {
++            chance = 80;
++        } else if (advertisesTrees) {
++            chance = 150;
++        } else {
++            chance = 22;
++        }
++
++        return new BiomeProfile(chance, treeStyle(biome, hints));
++    }
++
++    private static TreeStyle treeStyle(Holder<Biome> biome, String hints) {
++        if (hints.contains("cherry")) {
++            return new TreeStyle(Blocks.CHERRY_LOG.defaultBlockState(), Blocks.CHERRY_LEAVES.defaultBlockState(),
++                    TreeShape.ROUND, 5);
++        }
++        if (biome.is(BiomeTags.IS_JUNGLE) || hints.contains("jungle") || hints.contains("rainforest")) {
++            return new TreeStyle(Blocks.JUNGLE_LOG.defaultBlockState(), Blocks.JUNGLE_LEAVES.defaultBlockState(),
++                    TreeShape.ROUND, 8);
++        }
++        if (biome.is(BiomeTags.IS_TAIGA) || hints.contains("spruce") || hints.contains("pine")
++                || hints.contains("taiga") || hints.contains("snow") || hints.contains("frozen")
++                || biome.value().getBaseTemperature() < 0.15F) {
++            return new TreeStyle(Blocks.SPRUCE_LOG.defaultBlockState(), Blocks.SPRUCE_LEAVES.defaultBlockState(),
++                    TreeShape.CONIFER, 7);
++        }
++        if (biome.is(BiomeTags.IS_SAVANNA) || hints.contains("acacia") || hints.contains("savanna")) {
++            return new TreeStyle(Blocks.ACACIA_LOG.defaultBlockState(), Blocks.ACACIA_LEAVES.defaultBlockState(),
++                    TreeShape.FLAT, 6);
++        }
++        if (hints.contains("dark_oak") || hints.contains("dark_forest")) {
++            return new TreeStyle(Blocks.DARK_OAK_LOG.defaultBlockState(), Blocks.DARK_OAK_LEAVES.defaultBlockState(),
++                    TreeShape.ROUND, 6);
++        }
++        if (hints.contains("birch")) {
++            return new TreeStyle(Blocks.BIRCH_LOG.defaultBlockState(), Blocks.BIRCH_LEAVES.defaultBlockState(),
++                    TreeShape.ROUND, 6);
++        }
++        if (hints.contains("mangrove")) {
++            return new TreeStyle(Blocks.MANGROVE_LOG.defaultBlockState(), Blocks.MANGROVE_LEAVES.defaultBlockState(),
++                    TreeShape.FLAT, 6);
++        }
++        return new TreeStyle(Blocks.OAK_LOG.defaultBlockState(), Blocks.OAK_LEAVES.defaultBlockState(),
++                TreeShape.ROUND, 5);
++    }
++
++    private static void placeTree(Mapper mapper, Int2ObjectOpenHashMap<VoxelizedSection> sections,
++                                  int chunkX, int chunkZ, int x, int groundY, int z, int height,
++                                  TreeStyle style, Holder<Biome> biome, long random) {
++        long logId = prediction(mapper.getBaseId((byte) 15, style.log, biome));
++        long leavesId = prediction(mapper.getBaseId((byte) 15, style.leaves, biome));
++        int topY = groundY + height;
++        int crownX = x + (int) ((random >>> 28) & 3) % 3 - 1;
++        int crownZ = z + (int) ((random >>> 32) & 3) % 3 - 1;
++
++        if (style.shape == TreeShape.CONIFER) {
++            putCanopyLayer(sections, chunkX, chunkZ, crownX, topY + 1, crownZ, 0, leavesId, random + 1);
++            putCanopyLayer(sections, chunkX, chunkZ, crownX, topY, crownZ, 1, leavesId, random + 2);
++            putCanopyLayer(sections, chunkX, chunkZ, crownX, topY - 1, crownZ, 1, leavesId, random + 3);
++            putCanopyLayer(sections, chunkX, chunkZ, crownX, topY - 2, crownZ, 2, leavesId, random + 4);
++            putCanopyLayer(sections, chunkX, chunkZ, crownX, topY - 3, crownZ, 1, leavesId, random + 5);
++            putCanopyLayer(sections, chunkX, chunkZ, crownX, topY - 4, crownZ,
++                    height >= 9 ? 3 : 2, leavesId, random + 6);
++            putCanopyLayer(sections, chunkX, chunkZ, crownX, topY - 5, crownZ, 1, leavesId, random + 7);
++        } else if (style.shape == TreeShape.FLAT) {
++            int branchX = ((random >>> 36) & 1) == 0 ? -1 : 1;
++            int branchZ = ((random >>> 37) & 1) == 0 ? -1 : 1;
++            crownX = x + branchX;
++            crownZ = z + branchZ;
++            putCanopyLayer(sections, chunkX, chunkZ, crownX, topY - 1, crownZ, 2, leavesId, random + 8);
++            putCanopyLayer(sections, chunkX, chunkZ, crownX, topY, crownZ, 3, leavesId, random + 9);
++            putCanopyLayer(sections, chunkX, chunkZ, crownX, topY + 1, crownZ, 1, leavesId, random + 10);
++            putCanopyLayer(sections, chunkX, chunkZ, crownX - branchX * 2, topY, crownZ,
++                    2, leavesId, random + 11);
++            putBlock(sections, chunkX, chunkZ, x + branchX, topY - 1, z + branchZ, logId, false);
++            putBlock(sections, chunkX, chunkZ, crownX, topY, crownZ, logId, false);
++        } else {
++            int radius = height >= 9 ? 3 : 2;
++            putCanopyLayer(sections, chunkX, chunkZ, crownX, topY - 2, crownZ,
++                    Math.max(1, radius - 1), leavesId, random + 12);
++            putCanopyLayer(sections, chunkX, chunkZ, crownX, topY - 1, crownZ, radius, leavesId, random + 13);
++            putCanopyLayer(sections, chunkX, chunkZ, crownX, topY, crownZ, radius, leavesId, random + 14);
++            putCanopyLayer(sections, chunkX, chunkZ, crownX, topY + 1, crownZ, 1, leavesId, random + 15);
++        }
++
++        for (int y = groundY + 1; y <= topY; y++) {
++            int trunkX = style.shape == TreeShape.FLAT && y > groundY + height * 2 / 3 ? crownX : x;
++            int trunkZ = style.shape == TreeShape.FLAT && y > groundY + height * 2 / 3 ? crownZ : z;
++            putBlock(sections, chunkX, chunkZ, trunkX, y, trunkZ, logId, false);
++        }
++    }
++
++    private static void putCanopyLayer(Int2ObjectOpenHashMap<VoxelizedSection> sections,
++                                       int chunkX, int chunkZ, int centerX, int y, int centerZ,
++                                       int radius, long id, long random) {
++        for (int z = centerZ - radius; z <= centerZ + radius; z++) {
++            for (int x = centerX - radius; x <= centerX + radius; x++) {
++                int dx = Math.abs(x - centerX);
++                int dz = Math.abs(z - centerZ);
++                long cellRandom = mix64(random ^ ((long) x * 0x9E3779B97F4A7C15L)
++                        ^ ((long) y * 0x94D049BB133111EBL) ^ ((long) z * 0xC2B2AE3D27D4EB4FL));
++                boolean extremeCorner = radius > 1 && dx == radius && dz == radius;
++                boolean raggedEdge = radius > 1 && Math.max(dx, dz) == radius && (cellRandom & 15) == 0;
++                if ((!extremeCorner || (cellRandom & 3) == 0) && !raggedEdge) {
++                    putBlock(sections, chunkX, chunkZ, x, y, z, id, true);
++                }
++            }
++        }
++    }
++
++    private static long mix64(long value) {
++        value = (value ^ (value >>> 30)) * 0xBF58476D1CE4E5B9L;
++        value = (value ^ (value >>> 27)) * 0x94D049BB133111EBL;
++        return value ^ (value >>> 31);
++    }
++
++    private static int lowestNeighborFloor(Sample[] samples, int width, int sampleX, int sampleZ,
++                                           int fallback) {
++        int lowest = fallback;
++        for (int z = sampleZ - 1; z <= sampleZ + 1; z++) {
++            for (int x = sampleX - 1; x <= sampleX + 1; x++) {
++                int floorY = samples[z * width + x].floorY;
++                if (floorY < lowest) {
++                    lowest = floorY;
++                }
++            }
++        }
++        return lowest;
++    }
++
++    private static long prediction(long id) {
++        return id | PREDICTION_MARKER;
++    }
++
++    private static VoxelizedSection createLitSection(int chunkX, int sectionY, int chunkZ) {
++        VoxelizedSection section = VoxelizedSection.createEmpty().setPosition(chunkX, sectionY, chunkZ);
++        // Opaque faces receive their light from neighboring voxels. Predicted
++        // terrain is outdoors, so its surrounding air must carry full skylight.
++        Arrays.fill(section.section, Mapper.airWithLight(15));
++        return section;
++    }
++
++    private static void putColumn(Int2ObjectOpenHashMap<VoxelizedSection> sections,
++                                  int chunkX, int chunkZ, int x, int z,
++                                  int minY, int maxY, long id) {
++        if (maxY < minY) {
++            return;
++        }
++        for (int y = minY; y <= maxY; y++) {
++            putBlock(sections, chunkX, chunkZ, x, y, z, id, false);
++        }
++    }
++
++    private static void putBlock(Int2ObjectOpenHashMap<VoxelizedSection> sections,
++                                 int chunkX, int chunkZ, int x, int y, int z, long id,
++                                 boolean onlyIfAir) {
++        if (x < 0 || x >= 16 || z < 0 || z >= 16) {
++            return;
++        }
++        int sectionY = y >> 4;
++        VoxelizedSection section = sections.computeIfAbsent(sectionY,
++                ignored -> createLitSection(chunkX, sectionY, chunkZ));
++        int index = ((y & 15) << 8) | (z << 4) | x;
++        boolean wasAir = Mapper.isAir(section.section[index]);
++        if (onlyIfAir && !wasAir) {
++            return;
++        }
++        if (wasAir && !Mapper.isAir(id)) {
++            section.lvl0NonAirCount++;
++        }
++        section.section[index] = id;
++    }
++
++    private static boolean hasExistingData(WorldEngine world, int chunkX, int chunkZ, Set<Integer> sectionYs) {
++        int baseX = (chunkX & 1) << 4;
++        int baseZ = (chunkZ & 1) << 4;
++        for (int candidateSectionY : sectionYs) {
++            // Include the neighboring vertical sections so a rough prediction cannot
++            // add a second surface just above or below an already-ingested real one.
++            for (int sectionY = candidateSectionY - 1; sectionY <= candidateSectionY + 1; sectionY++) {
++                WorldSection worldSection = world.acquireIfExists(0, chunkX >> 1, sectionY >> 1, chunkZ >> 1);
++                if (worldSection == null) {
++                    continue;
++                }
++                try {
++                    long[] data = worldSection._unsafeGetRawDataArray();
++                    int baseY = (sectionY & 1) << 4;
++                    for (int y = 0; y < 16; y++) {
++                        for (int z = 0; z < 16; z++) {
++                            int index = WorldSection.getIndex(baseX, baseY + y, baseZ + z);
++                            for (int x = 0; x < 16; x++) {
++                                long id = data[index + x];
++                                if (!Mapper.isAir(id) && (id & PREDICTION_MARKER) == 0) {
++                                    return true;
++                                }
++                            }
++                        }
++                    }
++                } finally {
++                    worldSection.release();
++                }
++            }
++        }
++        return false;
++    }
++
++    private static int sanitizeStride(int configured) {
++        if (configured <= 2) return 2;
++        if (configured <= 4) return 4;
++        return 8;
++    }
++
++    private static int strideForDistance(int distanceSquared, int innerRadius, int outerRadius) {
++        int maximum = sanitizeStride(VoxyConfig.CONFIG.seedLodSampleStride);
++        if (!VoxyConfig.CONFIG.seedLodAdaptiveQuality || maximum == 2) {
++            return maximum;
++        }
++        double distance = Math.sqrt(distanceSquared);
++        double range = Math.max(1.0, outerRadius - innerRadius);
++        double progress = Math.max(0.0, Math.min(1.0, (distance - innerRadius) / range));
++        if (progress < 0.22) {
++            return 2;
++        }
++        if (maximum == 4 || progress < 0.58) {
++            return 4;
++        }
++        return 8;
++    }
++
++    private static Offset squareSpiral(long index) {
++        if (index == 0) {
++            return new Offset(0, 0);
++        }
++        long layer = (long) Math.ceil((Math.sqrt(index + 1.0) - 1.0) / 2.0);
++        long side = layer * 2;
++        long max = (side + 1) * (side + 1) - 1;
++        long offset = max - index;
++        if (offset < side) return new Offset((int) (layer - offset), (int) -layer);
++        offset -= side;
++        if (offset < side) return new Offset((int) -layer, (int) (-layer + offset));
++        offset -= side;
++        if (offset < side) return new Offset((int) (-layer + offset), (int) layer);
++        offset -= side;
++        return new Offset((int) layer, (int) (layer - offset));
++    }
++
++    public void shutdown() {
++        this.stopped = true;
++        this.binding = null;
++        this.executor.shutdownNow();
++        this.plannedStrides.clear();
++    }
++
++    private static final class Binding {
++        final ServerLevel level;
++        final WorldEngine world;
++        final ChunkGenerator generator;
++        final RandomState randomState;
++        final long seed;
++        final boolean fastHeightSampling;
++        final ConcurrentHashMap<SurfaceKey, SurfaceMaterial> surfaceMaterials = new ConcurrentHashMap<>();
++        final ConcurrentHashMap<String, BiomeProfile> biomeProfiles = new ConcurrentHashMap<>();
++
++        Binding(ServerLevel level, WorldEngine world, ChunkGenerator generator, RandomState randomState, long seed) {
++            this.level = level;
++            this.world = world;
++            this.generator = generator;
++            this.randomState = randomState;
++            this.seed = seed;
++            this.fastHeightSampling = generator instanceof NoiseBasedChunkGenerator;
++        }
++    }
++    private record SurfaceKey(String biomeId, int altitudeBand, boolean ocean) {}
++    private record SurfaceMaterial(BlockState surface, BlockState floor) {}
++    private record Sample(int surfaceY, int floorY, Holder<Biome> biome,
++                          BlockState surfaceBlock, BlockState floorBlock) {
++        boolean isOcean() {
++            return this.surfaceY > this.floorY;
++        }
++    }
++    private record BiomeProfile(int treeChance, TreeStyle style) {}
++    private record TreeStyle(BlockState log, BlockState leaves, TreeShape shape, int baseHeight) {}
++    private enum TreeShape { ROUND, CONIFER, FLAT }
++    private record Offset(int x, int z) {}
++}
+diff --git a/src/main/resources/assets/voxy/lang/en_us.json b/src/main/resources/assets/voxy/lang/en_us.json
+index 08d1299b..2f4b9c22 100644
+--- a/src/main/resources/assets/voxy/lang/en_us.json
++++ b/src/main/resources/assets/voxy/lang/en_us.json
+@@ -16,6 +16,30 @@
+   "voxy.config.general.ingest": "Chunk Ingest",
+   "voxy.config.general.ingest.tooltip": "Enables or disables voxies ability to convert new chunks into LoDs",
+ 
++  "voxy.config.general.seed_lod_enabled": "Seed-sampled distant terrain (experimental)",
++  "voxy.config.general.seed_lod_enabled.tooltip": "In single-player Overworlds, predicts distant terrain from the seed without loading chunks. Existing and subsequently loaded chunk data stays authoritative.",
++
++  "voxy.config.general.seed_lod_distance": "Seed LOD distance",
++  "voxy.config.general.seed_lod_distance.tooltip": "Prediction radius in chunks. Higher values take longer to fill and use more Voxy cache space.",
++
++  "voxy.config.general.seed_lod_stride": "Seed LOD maximum sample stride",
++  "voxy.config.general.seed_lod_stride.tooltip": "Farthest terrain sampling interval. With adaptive quality enabled, closer predictions automatically use stride 2 or 4.",
++
++  "voxy.config.general.seed_lod_adaptive_quality": "Adaptive seed LOD quality",
++  "voxy.config.general.seed_lod_adaptive_quality.tooltip": "Uses stride 2 near the normal render boundary, stride 4 at medium range, and the configured maximum stride far away.",
++
++  "voxy.config.general.seed_lod_smoothing": "Smooth sampled terrain",
++  "voxy.config.general.seed_lod_smoothing.tooltip": "Reconstructs smooth one-block terrain columns between sparse seed samples. Abrupt height changes remain cliff-like.",
++
++  "voxy.config.general.seed_lod_vegetation": "Predicted distant vegetation",
++  "voxy.config.general.seed_lod_vegetation.tooltip": "Adds cheap deterministic biome-aware tree silhouettes using datapack biome feature hints. They approximate density and appearance, not exact decorated chunk trees.",
++
++  "voxy.config.general.seed_lod_fast_datapack_sampling": "Fast datapack terrain sampling",
++  "voxy.config.general.seed_lod_fast_datapack_sampling.tooltip": "For noise-based datapacks, uses early-exit height queries and a learned surface-material cache instead of constructing every full vertical column. Disable only if a custom generator is incompatible.",
++
++  "voxy.config.general.seed_lod_threads": "Seed LOD threads",
++  "voxy.config.general.seed_lod_threads.tooltip": "Background seed sampling threads. Changes take effect after leaving and reopening the world.",
++
+   "voxy.config.general.rendering": "Voxy Rendering",
+   "voxy.config.general.rendering.tooltip": "Enables or disables voxy rendering",
+ 
+@@ -38,4 +62,4 @@
+   "voxy.config.general.ssao_mode.basic": "Basic",
+   "voxy.config.general.ssao_mode.better": "Better",
+   "voxy.config.general.ssao_mode.best": "Best"
+-}
+\ No newline at end of file
++}
