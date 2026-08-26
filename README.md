@@ -19,10 +19,22 @@ This project is unofficial, unsupported by MCRcortex, and not affiliated with Mo
 
 - Samples the active single-player Overworld `ChunkGenerator` without creating faraway chunks.
 - Writes predictions into Voxy's existing voxel, mipping, storage, meshing, occlusion, and rendering pipeline.
-- Uses bounded background work: at most 256 queued chunks and 32 new submissions per client tick.
+- Uses a priority worker queue with at most 512 pending jobs. Sparse full-distance tiles always run before detailed refinement.
+- Worker-thread changes take effect while the world is open.
 - Slightly overlaps Minecraft's normal render boundary to hide the empty transition ring.
 - Marks every prediction so later predictions may replace it while real ingested chunk data remains authoritative.
 - Supports prediction distances from 32 to 512 chunks and sample strides of 2, 4, or 8 blocks.
+
+### Instant sparse loading
+
+- Divides the full prediction radius into Voxy's native 512 by 512-block top-level tiles.
+- Samples each tile on a 32-block grid and writes the result directly into Voxy's top LOD instead of creating 1,024 detailed predicted chunks.
+- A complete tile needs 289 shared terrain samples, including its positive boundary, instead of as many as 16,384 stride-8 chunk samples for the same area.
+- Reconstructs the 16-block Voxy cells between samples with the existing terrain smoother.
+- Adds coarse terrain skirts and water so mountains remain closed and oceans remain visible.
+- Detects completed tiles in Voxy's persistent cache, so reopening a world does not resample them.
+- Stops scanning after the current radius and only plans unseen tiles after the player moves at least eight chunks.
+- Keeps a configurable nearby detail radius for the full V5 terrain, lighting, water, smoothing and vegetation path.
 
 ### Terrain quality
 
@@ -57,8 +69,10 @@ This is useful for datapacks such as Tectonic, Terralith, and other vanilla-styl
 | Setting | Recommendation | Notes |
 |---|---:|---|
 | Seed LOD distance | `192` | Radius in chunks |
+| Instant sparse loading | On | Fills the complete radius first |
+| Sparse detail distance | `64` | Full V5 terrain and trees inside this radius |
 | Maximum sample stride | `8` | Fastest; smoothing makes it substantially less blocky |
-| Seed LOD threads | `4` | Reopen the world after changing |
+| Seed LOD threads | `4` | Changes take effect immediately |
 | Adaptive quality | Optional | Better nearby geometry; more seed sampling |
 | Smooth sampled terrain | On | Large quality gain for little additional sampling cost |
 | Predicted vegetation | On | Cheap visual proxies |
@@ -68,9 +82,14 @@ The normal Voxy render distance must also be large enough to display the predict
 
 ## Performance model
 
-At stride 8, each predicted chunk uses a 4×4 sample grid including its halo: 16 sample positions rather than generating all 256 full terrain columns plus surface rules, carvers, features, lighting, entities, and chunk persistence.
+With instant sparse loading enabled, a 192-chunk radius generally needs roughly 120 to 170 top-level tile jobs, depending on alignment with the 32-chunk tile grid. Each new tile performs 289 shared generator samples. The old full-radius detailed path covers roughly 115,000 individual chunks and can require about 1.8 million stride-8 samples before accounting for repeated borders.
+
+After the sparse radius appears, only chunks inside the sparse detail distance use the detailed generator. At stride 8, each detailed predicted chunk uses a 4 by 4 sample grid including its halo: 16 sample positions rather than generating all 256 full terrain columns plus surface rules, carvers, features, lighting, entities, and chunk persistence.
 
 - Smoothing adds interpolation and voxel writes, not additional seed samples.
+- Sparse tiles write directly into Voxy's top LOD, avoiding per-chunk voxelization and four levels of repeated mipping for the far field.
+- Coarse work has priority over refinement, so moving or teleporting exposes new distant terrain before optional detail jobs.
+- Cached tiles are reused on later sessions.
 - Redesigned trees perform more tiny hash checks but produce roughly the same amount of leaf geometry as the earlier proxy implementation.
 - A 1,024-chunk placement simulation averaged 3.95 vegetation candidates per chunk with no preferred local X/Z lane.
 - Fast datapack sampling is expected to improve expensive noise-datapack sampling by roughly 1.5–4× compared with this patch's former full-column approach. This is an engineering estimate, not a universal benchmark.
@@ -86,6 +105,7 @@ Exact trees and structures would require most of Minecraft's generation pipeline
 - Single-player Overworld only
 - Multiplayer clients do not receive the server's complete seed/generator state
 - No exact structures, caves, decorations, player edits, or exact decorated trees
+- Terrain outside the sparse detail distance is intentionally coarse and does not contain vegetation proxies
 - Custom `ChunkGenerator` implementations fall back to the compatibility column path
 - Experimental code: back up important worlds and Voxy caches
 

@@ -1,6 +1,16 @@
 # Changelog
 
-## seedlod.5: current patch
+## seedlod.6: current patch
+
+- Added instant sparse loading using persistent 512 by 512-block Voxy top-level tiles.
+- Added shared 32-block terrain sampling for the far field.
+- Added the configurable sparse detail distance, defaulting to 64 chunks.
+- Prioritized full-distance sparse coverage ahead of detailed refinement.
+- Stopped completed sweeps from continuously rescanning the same radius.
+- Added movement-based outer-band planning and persistent completed-tile detection.
+- Made seed LOD worker-thread changes apply while a world is open.
+
+## seedlod.5
 
 - Added fast early-exit height sampling for vanilla-style noise datapacks.
 - Added cached datapack biome profiles and placed-feature hints.
