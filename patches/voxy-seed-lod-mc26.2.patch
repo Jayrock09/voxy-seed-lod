@@ -1,5 +1,36 @@
+diff --git a/build.gradle b/build.gradle
+index 66ee48a1..b9b2efc5 100644
+--- a/build.gradle
++++ b/build.gradle
+@@ -234,6 +234,8 @@ dependencies {
+     minecraft "com.mojang:minecraft:${project.minecraft_version}"
+     //mappings loom.officialMojangMappings()
+     implementation "net.fabricmc:fabric-loader:${project.loader_version}"
++    testImplementation "org.junit.jupiter:junit-jupiter:5.10.2"
++    testRuntimeOnly "org.junit.platform:junit-platform-launcher:1.10.2"
+ 
+ 
+     runtimeOnlyMsk(fabricApi.module("fabric-api-base", project.fabric_api_version))
+@@ -283,6 +285,10 @@ dependencies {
+     //compileOnly("maven.modrinth:flashback:VaqZB1DF")
+ }
+ 
++tasks.named('test') {
++    useJUnitPlatform()
++}
++
+ 
+ def targetJavaVersion = 25
+ tasks.withType(JavaCompile).configureEach {
+@@ -420,4 +426,4 @@ if (!isInGHA) {
+             exclude group: 'net.fabricmc', module: 'fabric-loader'
+         }
+     }
+-}*/
+\ No newline at end of file
++}*/
 diff --git a/gradle.properties b/gradle.properties
-index a25ea295..0e6ed474 100644
+index a25ea295..070960b3 100644
 --- a/gradle.properties
 +++ b/gradle.properties
 @@ -29,6 +29,6 @@ nvidium_version=0.4.3-beta13-26.1
@@ -7,16 +38,21 @@ index a25ea295..0e6ed474 100644
  
  # Mod Properties
 -mod_version = 0.2.19-beta
-+mod_version = 0.2.19-beta-seedlod.15
++mod_version = 0.2.19-beta-seedlod.16
  maven_group = me.cortex
 -archives_base_name = voxy
 \ No newline at end of file
 +archives_base_name = voxy
 diff --git a/src/main/java/me/cortex/voxy/client/VoxyClient.java b/src/main/java/me/cortex/voxy/client/VoxyClient.java
-index c0029a7d..a91e7625 100644
+index c0029a7d..b5b89301 100644
 --- a/src/main/java/me/cortex/voxy/client/VoxyClient.java
 +++ b/src/main/java/me/cortex/voxy/client/VoxyClient.java
-@@ -6,6 +6,7 @@ import me.cortex.voxy.common.Logger;
+@@ -2,10 +2,12 @@ package me.cortex.voxy.client;
+ 
+ import me.cortex.voxy.client.core.gl.Capabilities;
+ import me.cortex.voxy.client.core.rendering.util.SharedIndexBuffer;
++import me.cortex.voxy.client.seedlod.SeedLodDebugHud;
+ import me.cortex.voxy.common.Logger;
  import me.cortex.voxy.commonImpl.VoxyCommon;
  import net.fabricmc.api.ClientModInitializer;
  import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
@@ -24,21 +60,22 @@ index c0029a7d..a91e7625 100644
  import net.fabricmc.loader.api.FabricLoader;
  import net.minecraft.client.Minecraft;
  
-@@ -66,6 +67,13 @@ public class VoxyClient implements ClientModInitializer {
+@@ -65,6 +67,14 @@ public class VoxyClient implements ClientModInitializer {
+     @Override
      public void onInitializeClient() {
          DebugEntries.init();
- 
++        SeedLodDebugHud.init();
++
 +        ClientTickEvents.END_CLIENT_TICK.register(client -> {
 +            var instance = VoxyCommon.getInstance();
 +            if (instance instanceof VoxyClientInstance clientInstance) {
 +                clientInstance.tickSeedLod(client);
 +            }
 +        });
-+
+ 
          ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> {
              if (VoxyCommon.isAvailable()) {
-                 dispatcher.register(VoxyCommands.register());
-@@ -92,4 +100,4 @@ public class VoxyClient implements ClientModInitializer {
+@@ -92,4 +102,4 @@ public class VoxyClient implements ClientModInitializer {
      public static boolean disableSodiumChunkRender() {
          return false;// getOcclusionDebugState() != 0;
      }
@@ -46,7 +83,7 @@ index c0029a7d..a91e7625 100644
 \ No newline at end of file
 +}
 diff --git a/src/main/java/me/cortex/voxy/client/VoxyClientInstance.java b/src/main/java/me/cortex/voxy/client/VoxyClientInstance.java
-index 2dab3784..fb0f1e73 100644
+index 2dab3784..5b78624a 100644
 --- a/src/main/java/me/cortex/voxy/client/VoxyClientInstance.java
 +++ b/src/main/java/me/cortex/voxy/client/VoxyClientInstance.java
 @@ -4,6 +4,7 @@ import me.cortex.voxy.client.compat.FlashbackCompat;
@@ -65,7 +102,7 @@ index 2dab3784..fb0f1e73 100644
  
      public VoxyClientInstance() {
          {
-@@ -34,9 +36,14 @@ public class VoxyClientInstance extends VoxyInstance {
+@@ -34,9 +36,18 @@ public class VoxyClientInstance extends VoxyInstance {
              this.config = StorageConfigUtil.getCreateStorageConfig(Config.class, c->c.version==1&&c.sectionStorageConfig!=null, ()->DEFAULT_STORAGE_CONFIG, basePath);
          }
          super();
@@ -77,10 +114,14 @@ index 2dab3784..fb0f1e73 100644
 +        this.seedLodManager.tick(client);
 +    }
 +
++    public SeedLodManager getSeedLodManager() {
++        return this.seedLodManager;
++    }
++
      @Override
      protected boolean shouldCreateInstance() {
          return !this.config.disabled;
-@@ -84,6 +91,7 @@ public class VoxyClientInstance extends VoxyInstance {
+@@ -84,6 +95,7 @@ public class VoxyClientInstance extends VoxyInstance {
  
      @Override
      public void shutdown() {
@@ -88,11 +129,72 @@ index 2dab3784..fb0f1e73 100644
          super.shutdown();
          //Free the render resources cache since the entire instance is freed
          RenderResourceReuse.clearResources();
+diff --git a/src/main/java/me/cortex/voxy/client/VoxyCommands.java b/src/main/java/me/cortex/voxy/client/VoxyCommands.java
+index a902a578..4569f774 100644
+--- a/src/main/java/me/cortex/voxy/client/VoxyCommands.java
++++ b/src/main/java/me/cortex/voxy/client/VoxyCommands.java
+@@ -7,6 +7,8 @@ import com.mojang.brigadier.context.CommandContext;
+ import com.mojang.brigadier.suggestion.Suggestions;
+ import com.mojang.brigadier.suggestion.SuggestionsBuilder;
+ import me.cortex.voxy.client.core.IVoxyRenderSystemHolder;
++import me.cortex.voxy.client.config.VoxyConfig;
++import me.cortex.voxy.client.seedlod.SeedLodDebugHud;
+ import me.cortex.voxy.common.DebugUtils;
+ import me.cortex.voxy.commonImpl.VoxyCommon;
+ import me.cortex.voxy.commonImpl.WorldIdentifier;
+@@ -67,13 +69,40 @@ public class VoxyCommands {
+                                 .executes(ctx->verifyTLNs(ctx, BoolArgumentType.getBool(ctx, "attemptRepair"))))
+                 );
+ 
++        var seedLod = ClientCommands.literal("seedlod")
++                .then(ClientCommands.literal("debug")
++                        .executes(VoxyCommands::toggleSeedLodDebug))
++                .then(ClientCommands.literal("stats")
++                        .executes(VoxyCommands::showSeedLodStats));
++
+         return ClientCommands.literal("voxy")//.requires((ctx)-> VoxyCommon.getInstance() != null)
+                 .then(ClientCommands.literal("reload")
+                         .executes(VoxyCommands::reloadInstance))
+                 .then(imports)
++                .then(seedLod)
+                 .then(debug);
+     }
+ 
++    private static int toggleSeedLodDebug(CommandContext<FabricClientCommandSource> ctx) {
++        VoxyConfig.CONFIG.seedLodDebugHud = !VoxyConfig.CONFIG.seedLodDebugHud;
++        VoxyConfig.CONFIG.save();
++        ctx.getSource().sendFeedback(Component.literal("Seed LOD debug HUD "
++                + (VoxyConfig.CONFIG.seedLodDebugHud ? "enabled" : "disabled")));
++        return 1;
++    }
++
++    private static int showSeedLodStats(CommandContext<FabricClientCommandSource> ctx) {
++        var instance = VoxyCommon.getInstance();
++        if (!(instance instanceof VoxyClientInstance clientInstance)) {
++            ctx.getSource().sendError(Component.literal("Voxy is not active"));
++            return 0;
++        }
++        for (String line : SeedLodDebugHud.lines(clientInstance.getSeedLodManager().debugSnapshot())) {
++            ctx.getSource().sendFeedback(Component.literal(line));
++        }
++        return 1;
++    }
++
+     private static int reloadInstance(CommandContext<FabricClientCommandSource> ctx) {
+         var instance = (VoxyClientInstance)VoxyCommon.getInstance();
+         if (instance == null) {
+@@ -316,4 +345,4 @@ public class VoxyCommands {
+         }
+         return 1;
+     }
+-}
+\ No newline at end of file
++}
 diff --git a/src/main/java/me/cortex/voxy/client/config/VoxyConfig.java b/src/main/java/me/cortex/voxy/client/config/VoxyConfig.java
-index b2f5eefb..e1f41d7e 100644
+index b2f5eefb..d854da70 100644
 --- a/src/main/java/me/cortex/voxy/client/config/VoxyConfig.java
 +++ b/src/main/java/me/cortex/voxy/client/config/VoxyConfig.java
-@@ -35,6 +35,17 @@ public class VoxyConfig {
+@@ -35,6 +35,19 @@ public class VoxyConfig {
      public float subDivisionSize = 64;
      public String fogMode;
      public boolean dontUseSodiumBuilderThreads = false;
@@ -106,15 +208,17 @@ index b2f5eefb..e1f41d7e 100644
 +    public boolean seedLodNSizedGeneration = true;
 +    public boolean seedLodVegetation = true;
 +    public boolean seedLodFastDatapackSampling = true;
++    public boolean seedLodDebugHud = false;
++    public boolean seedLodDebugMap = false;
 +    public int seedLodThreads = Math.max(1, Math.min(2, CpuLayout.getCoreCount()/4));
      public String ssaoMode;
  
      public SSAO.SSAOMode getSSAOMode() {
 diff --git a/src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java b/src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java
-index d456e55c..2d4a8365 100644
+index d456e55c..f779c2e7 100644
 --- a/src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java
 +++ b/src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java
-@@ -79,6 +79,78 @@ public class VoxyConfigMenu implements ConfigEntryPoint {
+@@ -79,6 +79,87 @@ public class VoxyConfigMenu implements ConfigEntryPoint {
                                          ()->CFG.ingestEnabled, v->CFG.ingestEnabled=v)
                          )
                  ).setEnabler("voxy:enabled"),
@@ -188,6 +292,15 @@ index d456e55c..2d4a8365 100644
 +                                        ()->CFG.seedLodThreads, v->CFG.seedLodThreads=v,
 +                                        new Range(1, Math.max(1, CpuLayout.getCoreCount()), 1))
 +                                        .setImpact(OptionImpact.HIGH)
++                        ), new Group(
++                                new BoolOption(
++                                        "voxy:seed_lod_debug_hud",
++                                        Component.translatable("voxy.config.general.seed_lod_debug_hud"),
++                                        ()->CFG.seedLodDebugHud, v->CFG.seedLodDebugHud=v),
++                                new BoolOption(
++                                        "voxy:seed_lod_debug_map",
++                                        Component.translatable("voxy.config.general.seed_lod_debug_map"),
++                                        ()->CFG.seedLodDebugMap, v->CFG.seedLodDebugMap=v)
 +                        )
 +                ).setEnabler("voxy:enabled"),
                  new Page(Component.translatable("voxy.config.rendering"),
@@ -195,10 +308,10 @@ index d456e55c..2d4a8365 100644
                                  new BoolOption(
 diff --git a/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java
 new file mode 100644
-index 00000000..772efa9d
+index 00000000..a3ee0731
 --- /dev/null
 +++ b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java
-@@ -0,0 +1,1266 @@
+@@ -0,0 +1,1376 @@
 +package me.cortex.voxy.client.seedlod;
 +
 +import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
@@ -229,6 +342,7 @@ index 00000000..772efa9d
 +
 +import java.util.Arrays;
 +import java.util.ArrayList;
++import java.util.HashSet;
 +import java.util.List;
 +import java.util.Locale;
 +import java.util.Set;
@@ -263,6 +377,8 @@ index 00000000..772efa9d
 +    private final ThreadPoolExecutor executor;
 +    private final AtomicInteger pendingTasks = new AtomicInteger();
 +    private final AtomicLong taskSequence = new AtomicLong();
++    private final Set<WorkKey> runningWork = ConcurrentHashMap.newKeySet();
++    private volatile SeedLodMetrics metrics = new SeedLodMetrics();
 +    // Level-0 work remains a 64-block tile. N-sized work is keyed by a complete
 +    // native Voxy section so a partial finer child can never hide an unfilled
 +    // part of its coarser parent. Moving inward creates a different, finer key.
@@ -273,6 +389,7 @@ index 00000000..772efa9d
 +    private volatile int playerChunkX;
 +    private volatile int playerChunkZ;
 +    private volatile long scanGeneration;
++    private volatile long lastTeleportGeneration = Long.MIN_VALUE;
 +
 +    private int scanCenterX;
 +    private int scanCenterZ;
@@ -327,7 +444,7 @@ index 00000000..772efa9d
 +        if (current == null || current.level != serverLevel || current.world != world) {
 +            var chunkSource = serverLevel.getChunkSource();
 +            current = new Binding(serverLevel, world, chunkSource.getGenerator(), chunkSource.randomState(),
-+                    serverLevel.getSeed());
++                    serverLevel.getSeed(), this.metrics = new SeedLodMetrics());
 +            this.binding = current;
 +            this.plannedWork.clear();
 +            this.completedWork.clear();
@@ -353,6 +470,7 @@ index 00000000..772efa9d
 +                // A teleport makes the old queue actively harmful. Ordinary
 +                // movement keeps nearby work alive so the wave cannot starve.
 +                this.scanGeneration++;
++                this.lastTeleportGeneration = this.scanGeneration;
 +            }
 +            this.scanCenterX = this.playerChunkX;
 +            this.scanCenterZ = this.playerChunkZ;
@@ -433,7 +551,8 @@ index 00000000..772efa9d
 +                }
 +
 +                TilePlan plan = new TilePlan(stride, outputLevel,
-+                        targetRadius, qualityDropoff, this.scanGeneration);
++                        targetRadius, qualityDropoff, this.scanGeneration,
++                        System.nanoTime());
 +                boolean claimed = previousPlan == null
 +                        ? this.plannedWork.putIfAbsent(key, plan) == null
 +                        : this.plannedWork.replace(key, previousPlan, plan);
@@ -454,41 +573,55 @@ index 00000000..772efa9d
 +
 +    private void submitWaveWork(Binding taskBinding, WorkKey key, TilePlan plan,
 +                                double distanceChunks) {
-+        this.pendingTasks.incrementAndGet();
++        int pending = this.pendingTasks.incrementAndGet();
++        taskBinding.metrics.recordJobQueued(pending);
 +        try {
 +            this.executor.execute(new PrioritizedTask(WAVE_PRIORITY, distanceChunks,
 +                    this.taskSequence.getAndIncrement(), () -> {
-+                boolean keepPlanned = true;
++                boolean completed = false;
++                boolean cancelled = false;
++                boolean failed = false;
 +                boolean acquired = false;
 +                try {
++                    taskBinding.metrics.recordJobStarted(plan.enqueuedNanos);
++                    this.runningWork.add(key);
 +                    if (this.binding != taskBinding || this.scanGeneration != plan.generation
 +                            || !VoxyConfig.CONFIG.seedLodEnabled || !taskBinding.world.isLive()) {
-+                        keepPlanned = false;
++                        cancelled = true;
 +                        return;
 +                    }
 +                    if (this.plannedWork.get(key) != plan) {
-+                        keepPlanned = false;
++                        cancelled = true;
 +                        return;
 +                    }
 +                    taskBinding.world.acquireRef();
 +                    acquired = true;
-+                    keepPlanned = generateWaveWork(taskBinding, key, plan);
++                    completed = generateWaveWork(taskBinding, key, plan);
++                    cancelled = !completed;
 +                } catch (Throwable throwable) {
-+                    keepPlanned = false;
++                    failed = true;
 +                    Logger.error("Seed LOD wave generation failed for level "
 +                            + key.outputLevel + " work " + key.x + ", " + key.z, throwable);
 +                } finally {
 +                    if (acquired && taskBinding.world.isLive()) {
 +                        taskBinding.world.releaseRef();
 +                    }
-+                    if (keepPlanned) {
++                    if (completed) {
 +                        this.completedWork.merge(key, plan.stride, Math::min);
++                        taskBinding.metrics.recordJobFinished();
++                    } else if (failed) {
++                        taskBinding.metrics.recordJobFailed();
++                    } else if (cancelled) {
++                        taskBinding.metrics.recordJobCancelled(
++                                plan.generation < this.lastTeleportGeneration);
 +                    }
++                    this.runningWork.remove(key);
 +                    this.plannedWork.remove(key, plan);
 +                    this.pendingTasks.decrementAndGet();
 +                }
 +            }));
 +        } catch (RejectedExecutionException ignored) {
++            taskBinding.metrics.recordJobCancelled(false);
 +            this.pendingTasks.decrementAndGet();
 +            this.plannedWork.remove(key, plan);
 +        }
@@ -568,6 +701,12 @@ index 00000000..772efa9d
 +            if (!coarseCells.isEmpty() && isCurrentWaveTask(binding, workKey, plan)) {
 +                WorldUpdater.insertCoarseUpdate(binding.world, plan.outputLevel,
 +                        coarseCells, PREDICTION_MARKER);
++                Set<Integer> verticalSections = new HashSet<>();
++                for (WorldUpdater.CoarseCell cell : coarseCells) {
++                    verticalSections.add(Math.floorDiv(cell.y(), 32));
++                }
++                binding.metrics.recordWrite(plan.outputLevel,
++                        verticalSections.size(), coarseCells.size());
 +            }
 +            return true;
 +        }
@@ -598,6 +737,7 @@ index 00000000..772efa9d
 +            }
 +            for (VoxelizedSection section : sections.values()) {
 +                WorldUpdater.insertUpdate(binding.world, section);
++                binding.metrics.recordWrite(0, 1, section.lvl0NonAirCount);
 +            }
 +        }
 +        return true;
@@ -838,15 +978,34 @@ index 00000000..772efa9d
 +                && VoxyConfig.CONFIG.seedLodFastDatapackSampling;
 +        SampleKey key = new SampleKey(stride, cellX, cellZ, fast);
 +        Sample cached = binding.sharedSamples.get(key);
-+        if (cached != null) return cached;
++        if (cached != null) {
++            binding.metrics.recordCacheHit();
++            return cached;
++        }
 +        if (binding.sharedSamples.size() >= MAX_SHARED_SAMPLES) {
++            binding.metrics.recordCacheMiss();
 +            return sample(binding, blockX, blockZ, minY, maxY);
 +        }
-+        return binding.sharedSamples.computeIfAbsent(key,
-+                ignored -> sample(binding, blockX, blockZ, minY, maxY));
++        boolean[] created = new boolean[1];
++        Sample result = binding.sharedSamples.computeIfAbsent(key, ignored -> {
++            created[0] = true;
++            binding.metrics.recordCacheMiss();
++            return sample(binding, blockX, blockZ, minY, maxY);
++        });
++        if (!created[0]) binding.metrics.recordCacheHit();
++        return result;
 +    }
 +
 +    private static Sample sample(Binding binding, int blockX, int blockZ, int minY, int maxY) {
++        long startNanos = System.nanoTime();
++        try {
++            return sampleRaw(binding, blockX, blockZ, minY, maxY);
++        } finally {
++            binding.metrics.recordGeneratorSample(System.nanoTime() - startNanos);
++        }
++    }
++
++    private static Sample sampleRaw(Binding binding, int blockX, int blockZ, int minY, int maxY) {
 +        int waterSurfaceY = waterSurfaceY(binding.generator);
 +        if (binding.fastHeightSampling && VoxyConfig.CONFIG.seedLodFastDatapackSampling) {
 +            // One solid-surface query replaces the previous world-surface query
@@ -1405,6 +1564,58 @@ index 00000000..772efa9d
 +        this.executor.shutdownNow();
 +        this.plannedWork.clear();
 +        this.completedWork.clear();
++        this.runningWork.clear();
++    }
++
++    public SeedLodMetrics.Snapshot debugSnapshot() {
++        Binding current = this.binding;
++        int cacheEntries = current == null ? 0 : current.sharedSamples.size();
++        long memory = (long) this.plannedWork.size() * 112L
++                + (long) this.completedWork.size() * 72L
++                + (long) cacheEntries * 176L
++                + (long) this.executor.getQueue().size() * 112L;
++        long repairBaseline = current == null ? 0L : current.hierarchyRepairBaseline;
++        long childBaseline = current == null ? 0L : current.hierarchyChildBaseline;
++        long replacementSectionBaseline = current == null ? 0L : current.realReplacementSectionBaseline;
++        long replacementVoxelBaseline = current == null ? 0L : current.realReplacementVoxelBaseline;
++        var state = new SeedLodMetrics.RuntimeState(current != null && !this.stopped && VoxyConfig.CONFIG.seedLodEnabled,
++                this.scannedTargetRadius < 0 ? 0 : this.scannedTargetRadius,
++                strideForDistance(0, Math.max(4, this.scannedQualityDropoff)),
++                this.waveRing, this.executor.getQueue().size(), this.executor.getActiveCount(),
++                this.completedWork.size(), cacheEntries, memory,
++                Math.max(0L, WorldUpdater.getSeedLodHierarchyRepairs() - repairBaseline),
++                Math.max(0L, WorldUpdater.getSeedLodMaterializedChildren() - childBaseline),
++                Math.max(0L, WorldUpdater.getSeedLodRealReplacementSections() - replacementSectionBaseline),
++                Math.max(0L, WorldUpdater.getSeedLodRealReplacementVoxels() - replacementVoxelBaseline));
++        return this.metrics.snapshot(state);
++    }
++
++    public List<DebugCell> debugCells(int radiusTiles) {
++        int radius = Math.max(1, Math.min(48, radiusTiles));
++        int centerTileX = Math.floorDiv(this.playerChunkX, WAVE_TILE_CHUNKS);
++        int centerTileZ = Math.floorDiv(this.playerChunkZ, WAVE_TILE_CHUNKS);
++        int targetRadius = Math.max(0, this.scannedTargetRadius);
++        long targetSquared = (long) targetRadius * targetRadius;
++        List<DebugCell> result = new ArrayList<>((radius * 2 + 1) * (radius * 2 + 1));
++        for (int dz = -radius; dz <= radius; dz++) {
++            for (int dx = -radius; dx <= radius; dx++) {
++                int tileX = centerTileX + dx;
++                int tileZ = centerTileZ + dz;
++                long distanceSquared = minimumDistanceSquaredToRegion(
++                        this.playerChunkX, this.playerChunkZ, tileX, tileZ, WAVE_TILE_CHUNKS);
++                if (distanceSquared > targetSquared) continue;
++                int stride = strideForDistance((int) Math.min(Integer.MAX_VALUE, distanceSquared),
++                        Math.max(4, this.scannedQualityDropoff));
++                int level = this.scannedNSizedGeneration ? outputLevelForStride(stride) : 0;
++                WorkKey key = workKeyForTile(tileX, tileZ, level);
++                int state = 0;
++                Integer completedStride = this.completedWork.get(key);
++                if (completedStride != null && completedStride <= stride) state = 2;
++                else if (this.plannedWork.containsKey(key)) state = 1;
++                result.add(new DebugCell(dx + radius, dz + radius, level, state));
++            }
++        }
++        return result;
 +    }
 +
 +    private static final class Binding {
@@ -1414,18 +1625,29 @@ index 00000000..772efa9d
 +        final RandomState randomState;
 +        final long seed;
 +        final boolean fastHeightSampling;
++        final SeedLodMetrics metrics;
++        final long hierarchyRepairBaseline;
++        final long hierarchyChildBaseline;
++        final long realReplacementSectionBaseline;
++        final long realReplacementVoxelBaseline;
 +        final ConcurrentHashMap<SurfaceKey, SurfaceMaterial> surfaceMaterials = new ConcurrentHashMap<>();
 +        final ConcurrentHashMap<String, BiomeProfile> biomeProfiles = new ConcurrentHashMap<>();
 +        final ConcurrentHashMap<MappingKey, Long> predictionIds = new ConcurrentHashMap<>();
 +        final ConcurrentHashMap<SampleKey, Sample> sharedSamples = new ConcurrentHashMap<>();
 +
-+        Binding(ServerLevel level, WorldEngine world, ChunkGenerator generator, RandomState randomState, long seed) {
++        Binding(ServerLevel level, WorldEngine world, ChunkGenerator generator, RandomState randomState,
++                long seed, SeedLodMetrics metrics) {
 +            this.level = level;
 +            this.world = world;
 +            this.generator = generator;
 +            this.randomState = randomState;
 +            this.seed = seed;
++            this.metrics = metrics;
 +            this.fastHeightSampling = generator instanceof NoiseBasedChunkGenerator;
++            this.hierarchyRepairBaseline = WorldUpdater.getSeedLodHierarchyRepairs();
++            this.hierarchyChildBaseline = WorldUpdater.getSeedLodMaterializedChildren();
++            this.realReplacementSectionBaseline = WorldUpdater.getSeedLodRealReplacementSections();
++            this.realReplacementVoxelBaseline = WorldUpdater.getSeedLodRealReplacementVoxels();
 +        }
 +    }
 +    private record SurfaceKey(String biomeId, int altitudeBand, boolean ocean) {}
@@ -1437,7 +1659,7 @@ index 00000000..772efa9d
 +                              int minimumCellX, int minimumCellZ, int stride) {}
 +    private record WorkKey(int outputLevel, int x, int z) {}
 +    private record TilePlan(int stride, int outputLevel, int targetRadius,
-+                            int qualityDropoff, long generation) {}
++                            int qualityDropoff, long generation, long enqueuedNanos) {}
 +    private record Sample(int surfaceY, int floorY, Holder<Biome> biome,
 +                          BlockState surfaceBlock, BlockState floorBlock) {
 +        boolean isOcean() {
@@ -1448,6 +1670,7 @@ index 00000000..772efa9d
 +    private record TreeStyle(BlockState log, BlockState leaves, TreeShape shape, int baseHeight) {}
 +    private enum TreeShape { ROUND, CONIFER, FLAT }
 +    private record Offset(int x, int z) {}
++    public record DebugCell(int relativeX, int relativeZ, int level, int state) {}
 +
 +    private record PrioritizedTask(int priority, double distance, long sequence, Runnable action)
 +            implements Runnable, Comparable<PrioritizedTask> {
@@ -1579,10 +1802,10 @@ index c4a82828..b2d3f3c2 100644
 \ No newline at end of file
 +}
 diff --git a/src/main/java/me/cortex/voxy/common/world/WorldUpdater.java b/src/main/java/me/cortex/voxy/common/world/WorldUpdater.java
-index 1ab705b9..03b6ffec 100644
+index 1ab705b9..50f35cbb 100644
 --- a/src/main/java/me/cortex/voxy/common/world/WorldUpdater.java
 +++ b/src/main/java/me/cortex/voxy/common/world/WorldUpdater.java
-@@ -1,7 +1,12 @@
+@@ -1,12 +1,24 @@
  package me.cortex.voxy.common.world;
  
 +import it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap;
@@ -1594,8 +1817,20 @@ index 1ab705b9..03b6ffec 100644
 +import me.cortex.voxy.common.world.other.Mipper;
  import me.cortex.voxy.commonImpl.VoxyCommon;
  
++import java.util.concurrent.atomic.LongAdder;
++
  import static me.cortex.voxy.common.world.WorldEngine.*;
-@@ -19,6 +24,10 @@ public class WorldUpdater {
+ 
+ public class WorldUpdater {
++    private static final long PREDICTION_MARKER = 1L;
++    private static final LongAdder SEED_LOD_HIERARCHY_REPAIRS = new LongAdder();
++    private static final LongAdder SEED_LOD_MATERIALIZED_CHILDREN = new LongAdder();
++    private static final LongAdder SEED_LOD_REAL_REPLACEMENT_SECTIONS = new LongAdder();
++    private static final LongAdder SEED_LOD_REAL_REPLACEMENT_VOXELS = new LongAdder();
+     //Executes an update to the world and automatically updates all the parent mip layers up to level 4 (e.g. where 1 chunk section is 1 block big)
+ 
+     //NOTE: THIS RUNS ON THE THREAD IT WAS EXECUTED ON, when this method exits, the calling method may assume that VoxelizedSection is no longer needed
+@@ -19,6 +31,10 @@ public class WorldUpdater {
          }
  
          if (!into.isLive) throw new IllegalStateException("World is not live");
@@ -1606,7 +1841,22 @@ index 1ab705b9..03b6ffec 100644
          boolean shouldCheckEmptiness = false;
          WorldSection previousSection = null;
          for (int lvl = 0; lvl <= MAX_LOD_LAYER; lvl++) {
-@@ -89,6 +98,388 @@ public class WorldUpdater {
+@@ -36,9 +52,14 @@ public class WorldUpdater {
+             long status = insertSectionLvlIntoWorld(section, worldSection);
+             boolean didStateChange = (status&1)==1;
+             int airCount = (int) ((status>>1)&0x1FFF);
++            int predictionReplacements = (int) ((status >> 14) & 0x1FFF);
+ 
+ 
+             if (lvl == 0) {
++                if (predictionReplacements != 0) {
++                    SEED_LOD_REAL_REPLACEMENT_SECTIONS.increment();
++                    SEED_LOD_REAL_REPLACEMENT_VOXELS.add(predictionReplacements);
++                }
+                 int nonAirCountDelta = section.lvl0NonAirCount-(4096-airCount);
+                 if (nonAirCountDelta != 0) {
+                     worldSection.addNonEmptyBlockCount(nonAirCountDelta);
+@@ -89,6 +110,422 @@ public class WorldUpdater {
          }
      }
  
@@ -1855,18 +2105,17 @@ index 1ab705b9..03b6ffec 100644
 +                return;
 +            }
 +
++            int requiredChildren = requiredCoarseChildMask(parent.data);
 +            boolean parentMaskChanged = false;
++            int materializedChildren = 0;
 +            for (int childIndex = 0; childIndex < 8; childIndex++) {
++                if ((requiredChildren & (1 << childIndex)) == 0) continue;
 +                int childX = (parent.x << 1) | (childIndex & 1);
 +                int childY = (parent.y << 1) | ((childIndex >> 2) & 1);
 +                int childZ = (parent.z << 1) | ((childIndex >> 1) & 1);
 +                int parentBaseX = (childIndex & 1) << 4;
 +                int parentBaseY = ((childIndex >> 2) & 1) << 4;
 +                int parentBaseZ = ((childIndex >> 1) & 1) << 4;
-+
-+                if (!parentOctantHasNonAir(parent, parentBaseX, parentBaseY, parentBaseZ)) {
-+                    continue;
-+                }
 +
 +                WorldSection child = into.acquire(parent.lvl - 1, childX, childY, childZ);
 +                boolean childDataChanged;
@@ -1891,6 +2140,7 @@ index 1ab705b9..03b6ffec 100644
 +                        into.markDirty(child, childDataChanged ? UPDATE_TYPE_BLOCK_BIT : 0,
 +                                childDataChanged ? 0x3F : 0);
 +                    }
++                    if (childDataChanged) materializedChildren++;
 +
 +                int state = parent.updateEmptyChildState(child);
 +                if (state != 0) {
@@ -1901,7 +2151,13 @@ index 1ab705b9..03b6ffec 100644
 +                }
 +            }
 +
-+            boolean completionChanged = parent.markCoarseChildrenComplete();
++            boolean coverageComplete = hasCompleteCoverage(requiredChildren,
++                    Byte.toUnsignedInt(parent.getNonEmptyChildren()));
++            boolean completionChanged = coverageComplete && parent.markCoarseChildrenComplete();
++            if (coverageComplete) {
++                SEED_LOD_HIERARCHY_REPAIRS.increment();
++                SEED_LOD_MATERIALIZED_CHILDREN.add(materializedChildren);
++            }
 +            if (parentMaskChanged || completionChanged) {
 +                into.markDirty(parent,
 +                        parentMaskChanged ? UPDATE_TYPE_CHILD_EXISTENCE_BIT : 0, 0);
@@ -1909,24 +2165,36 @@ index 1ab705b9..03b6ffec 100644
 +        }
 +    }
 +
-+    private static boolean parentOctantHasNonAir(WorldSection parent,
-+                                                  int baseX, int baseY, int baseZ) {
-+        for (int y = 0; y < 16; y++) {
-+            for (int z = 0; z < 16; z++) {
-+                int index = WorldSection.getIndex(baseX, baseY + y, baseZ + z);
-+                for (int x = 0; x < 16; x++) {
-+                    if (!Mapper.isAir(parent.data[index + x])) {
-+                        return true;
++    static int requiredCoarseChildMask(long[] parentData) {
++        int mask = 0;
++        for (int childIndex = 0; childIndex < 8; childIndex++) {
++            int baseX = (childIndex & 1) << 4;
++            int baseY = ((childIndex >> 2) & 1) << 4;
++            int baseZ = ((childIndex >> 1) & 1) << 4;
++            boolean found = false;
++            for (int y = 0; y < 16 && !found; y++) {
++                for (int z = 0; z < 16 && !found; z++) {
++                    int index = WorldSection.getIndex(baseX, baseY + y, baseZ + z);
++                    for (int x = 0; x < 16; x++) {
++                        if (!Mapper.isAir(parentData[index + x])) {
++                            mask |= 1 << childIndex;
++                            found = true;
++                            break;
++                        }
 +                    }
 +                }
 +            }
 +        }
-+        return false;
++        return mask;
 +    }
 +
-+    private static boolean materializeChildFallback(WorldSection parent, WorldSection child,
-+                                                     int parentBaseX, int parentBaseY,
-+                                                     int parentBaseZ) {
++    static boolean hasCompleteCoverage(int requiredMask, int childMask) {
++        return (childMask & requiredMask) == requiredMask;
++    }
++
++    static boolean materializeChildFallback(WorldSection parent, WorldSection child,
++                                            int parentBaseX, int parentBaseY,
++                                            int parentBaseZ) {
 +        boolean changed = false;
 +        int existingGrandchildren = child.lvl == 0 ? 0
 +                : Byte.toUnsignedInt(child.getNonEmptyChildren());
@@ -1971,6 +2239,22 @@ index 1ab705b9..03b6ffec 100644
 +        return nonAir;
 +    }
 +
++    public static long getSeedLodHierarchyRepairs() {
++        return SEED_LOD_HIERARCHY_REPAIRS.sum();
++    }
++
++    public static long getSeedLodMaterializedChildren() {
++        return SEED_LOD_MATERIALIZED_CHILDREN.sum();
++    }
++
++    public static long getSeedLodRealReplacementSections() {
++        return SEED_LOD_REAL_REPLACEMENT_SECTIONS.sum();
++    }
++
++    public static long getSeedLodRealReplacementVoxels() {
++        return SEED_LOD_REAL_REPLACEMENT_VOXELS.sum();
++    }
++
 +    private static long packCell(int x, int y, int z) {
 +        return ((long) (x & 0x3FFFFFF) << 38)
 +                | ((long) (z & 0x3FFFFFF) << 12)
@@ -1995,8 +2279,41 @@ index 1ab705b9..03b6ffec 100644
  
      private static long insertSectionLvlIntoWorld(VoxelizedSection section, WorldSection worldSection) {
          final long[] vdat = section.section;
+@@ -100,6 +537,7 @@ public class WorldUpdater {
+         final int bz = (section.z&msk)<<(4-lvl);
+ 
+         int airCount = 0;
++        int predictionReplacements = 0;
+         boolean didStateChange = false;
+ 
+ 
+@@ -127,6 +565,11 @@ public class WorldUpdater {
+                     long oldId2 = secD[cSecIdx+2]; secD[cSecIdx+2] = vdat[i+2];
+                     long oldId3 = secD[cSecIdx+3]; secD[cSecIdx+3] = vdat[i+3];
+ 
++                    predictionReplacements += isPredictionReplacement(oldId0, vdat[i]) ? 1 : 0;
++                    predictionReplacements += isPredictionReplacement(oldId1, vdat[i+1]) ? 1 : 0;
++                    predictionReplacements += isPredictionReplacement(oldId2, vdat[i+2]) ? 1 : 0;
++                    predictionReplacements += isPredictionReplacement(oldId3, vdat[i+3]) ? 1 : 0;
++
+                     airCount += Mapper.isAir(oldId0)?1:0; didStateChange |= vdat[i+0] != oldId0;
+                     airCount += Mapper.isAir(oldId1)?1:0; didStateChange |= vdat[i+1] != oldId1;
+                     airCount += Mapper.isAir(oldId2)?1:0; didStateChange |= vdat[i+2] != oldId2;
+@@ -155,6 +598,12 @@ public class WorldUpdater {
+         long status = 0;
+         status |= didStateChange?1:0;
+         status |= Integer.toUnsignedLong(airCount)<<1;//VERY VERY VERY IMPORTANT NOTE: IS 13 BITS BIG NOT 12 BITS (since it can be 4096 which is 6 bits large)
++        status |= Integer.toUnsignedLong(predictionReplacements) << 14;
+         return status;
+     }
++
++    private static boolean isPredictionReplacement(long oldId, long newId) {
++        return !Mapper.isAir(oldId) && (oldId & PREDICTION_MARKER) != 0
++                && (newId & PREDICTION_MARKER) == 0;
++    }
+ }
 diff --git a/src/main/resources/assets/voxy/lang/en_us.json b/src/main/resources/assets/voxy/lang/en_us.json
-index 08d1299b..503fb998 100644
+index 08d1299b..b2d02387 100644
 --- a/src/main/resources/assets/voxy/lang/en_us.json
 +++ b/src/main/resources/assets/voxy/lang/en_us.json
 @@ -3,6 +3,7 @@
@@ -2007,7 +2324,7 @@ index 08d1299b..503fb998 100644
  
    "voxy.config.general.enabled": "Enable Voxy",
    "voxy.config.general.enabled.tooltip": "Fully enables or disables voxy",
-@@ -16,6 +17,39 @@
+@@ -16,6 +17,43 @@
    "voxy.config.general.ingest": "Chunk Ingest",
    "voxy.config.general.ingest.tooltip": "Enables or disables voxies ability to convert new chunks into LoDs",
  
@@ -2043,11 +2360,15 @@ index 08d1299b..503fb998 100644
 +
 +  "voxy.config.general.seed_lod_threads": "Seed LOD threads",
 +  "voxy.config.general.seed_lod_threads.tooltip": "Background seed sampling threads. Changes now take effect while the world is open.",
++  "voxy.config.general.seed_lod_debug_hud": "Seed LOD debug HUD",
++  "voxy.config.general.seed_lod_debug_hud.tooltip": "Shows live scheduling, sampling, hierarchy, replacement, and memory diagnostics.",
++  "voxy.config.general.seed_lod_debug_map": "Seed LOD section-state map",
++  "voxy.config.general.seed_lod_debug_map.tooltip": "Adds a conceptual map colored by output level and generation state to the debug HUD.",
 +
    "voxy.config.general.rendering": "Voxy Rendering",
    "voxy.config.general.rendering.tooltip": "Enables or disables voxy rendering",
  
-@@ -38,4 +72,4 @@
+@@ -38,4 +76,4 @@
    "voxy.config.general.ssao_mode.basic": "Basic",
    "voxy.config.general.ssao_mode.better": "Better",
    "voxy.config.general.ssao_mode.best": "Best"

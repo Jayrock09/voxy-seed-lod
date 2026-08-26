@@ -63,6 +63,14 @@ This project is unofficial, unsupported by MCRcortex, and not affiliated with Mo
 - Existing finer octants are preserved while uncovered octants inherit the fallback. Fine predictions or authoritative real chunks then overlay that background.
 - Parent fallback cells remain populated even where finer children exist, preventing screen-space LOD selection from exposing rectangular holes. Finer child sections remain untouched, and authoritative unmarked parent cells are preserved.
 
+### Diagnostics and hierarchy validation
+
+- An optional debug HUD reports the current radius, player stride, active ring, queued and running work, completed jobs, generator samples per second, generated sections and cells per second, cache hit rate, queue latency, cancellations, hierarchy repairs, real replacements, and estimated Seed LOD memory.
+- An optional conceptual map colors completed generation tiles by Voxy output level. Work in progress is white and missing work is dark, making scheduling and quality-band problems visible without altering world geometry.
+- `/voxy seedlod debug` toggles the HUD. `/voxy seedlod stats` prints the same diagnostics to chat for logs and bug reports.
+- Nine automated tests exercise the hierarchy invariants that prevent rectangular holes. They include concurrent sibling publication, negative coordinates, old-cache repair, and save/reload of coarse hierarchy state.
+- Instrumentation uses worker-friendly adders and calculates rolling rates on the client thread. Both HUD options are disabled by default.
+
 ### Terrain quality
 
 - Optional adaptive sampling starts at the configured minimum and progressively increases through power-of-two bands toward the configured horizon maximum.

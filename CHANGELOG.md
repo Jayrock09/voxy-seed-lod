@@ -1,6 +1,16 @@
 # Changelog
 
-## seedlod.15: current patch
+## seedlod.16: current patch
+
+- Added an optional live Seed LOD debug HUD with scheduling, throughput, cache, hierarchy, replacement, cancellation, latency, and estimated-memory counters.
+- Added an optional conceptual section-state map. Completed tiles are colored by Voxy output level, queued or running tiles are white, and missing tiles are dark.
+- Added `/voxy seedlod debug` to toggle the HUD and `/voxy seedlod stats` to print a diagnostics snapshot into chat.
+- Added low-contention worker counters and rolling rates for generator samples, generated cells, generated sections, average sample time, and average queue latency.
+- Added direct visibility into level 0, level 2, level 3, and level 4 write counts, sample-cache hit rate, teleport cancellations, hierarchy repairs, materialized fallback children, and real-chunk replacement counts.
+- Added nine automated hierarchy and serialization tests covering octant masks, partial coverage, fallback expansion, finer-data preservation, real-data preservation, concurrent publication, negative coordinates, current save/reload, and old-cache repair state.
+- Added JUnit 5 to the Gradle test workflow so hierarchy invariants are checked by `gradlew test` and the normal release build.
+
+## seedlod.15
 
 - Fixed the remaining large rectangular holes caused by partial hierarchy refinement.
 - Materializes every non-air sibling covered by a coarse parent before publishing its finer-child mask. Voxy can therefore keep its guarantee that every missing child is actually empty.
