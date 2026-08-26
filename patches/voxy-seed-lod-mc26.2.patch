@@ -1,5 +1,5 @@
 diff --git a/gradle.properties b/gradle.properties
-index a25ea295..6006d504 100644
+index a25ea295a8fac1778a82242a7570d28587a17905..9f048c23e3aadd318969f07fc80c0fc2dacdf1ea 100644
 --- a/gradle.properties
 +++ b/gradle.properties
 @@ -29,6 +29,6 @@ nvidium_version=0.4.3-beta13-26.1
@@ -7,13 +7,13 @@ index a25ea295..6006d504 100644
  
  # Mod Properties
 -mod_version = 0.2.19-beta
-+mod_version = 0.2.19-beta-seedlod.12
++mod_version = 0.2.19-beta-seedlod.13
  maven_group = me.cortex
 -archives_base_name = voxy
 \ No newline at end of file
 +archives_base_name = voxy
 diff --git a/src/main/java/me/cortex/voxy/client/VoxyClient.java b/src/main/java/me/cortex/voxy/client/VoxyClient.java
-index c0029a7d..a91e7625 100644
+index c0029a7d17463ad269b0ce8e0967a6ef9a2a904e..a91e762571c814a8fba04fcf554722dc3f697571 100644
 --- a/src/main/java/me/cortex/voxy/client/VoxyClient.java
 +++ b/src/main/java/me/cortex/voxy/client/VoxyClient.java
 @@ -6,6 +6,7 @@ import me.cortex.voxy.common.Logger;
@@ -46,7 +46,7 @@ index c0029a7d..a91e7625 100644
 \ No newline at end of file
 +}
 diff --git a/src/main/java/me/cortex/voxy/client/VoxyClientInstance.java b/src/main/java/me/cortex/voxy/client/VoxyClientInstance.java
-index 2dab3784..fb0f1e73 100644
+index 2dab3784c8f93626f34d38f9cbdfc67b41de7e5a..fb0f1e73ea12f4e28c11e2a359432edd27f2b57b 100644
 --- a/src/main/java/me/cortex/voxy/client/VoxyClientInstance.java
 +++ b/src/main/java/me/cortex/voxy/client/VoxyClientInstance.java
 @@ -4,6 +4,7 @@ import me.cortex.voxy.client.compat.FlashbackCompat;
@@ -89,7 +89,7 @@ index 2dab3784..fb0f1e73 100644
          //Free the render resources cache since the entire instance is freed
          RenderResourceReuse.clearResources();
 diff --git a/src/main/java/me/cortex/voxy/client/config/VoxyConfig.java b/src/main/java/me/cortex/voxy/client/config/VoxyConfig.java
-index b2f5eefb..84c59001 100644
+index b2f5eefb81627cb07dd13f6eebe1a00eef517577..84c59001cbb5c6ce128de098a9a24244805eb967 100644
 --- a/src/main/java/me/cortex/voxy/client/config/VoxyConfig.java
 +++ b/src/main/java/me/cortex/voxy/client/config/VoxyConfig.java
 @@ -35,6 +35,16 @@ public class VoxyConfig {
@@ -110,7 +110,7 @@ index b2f5eefb..84c59001 100644
  
      public SSAO.SSAOMode getSSAOMode() {
 diff --git a/src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java b/src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java
-index d456e55c..43939763 100644
+index d456e55c120a93d2a8c223b86c8eedff073cbd8b..6b7c082625d492d4d348e33f93aa961dd38bfa30 100644
 --- a/src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java
 +++ b/src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java
 @@ -79,6 +79,69 @@ public class VoxyConfigMenu implements ConfigEntryPoint {
@@ -145,9 +145,9 @@ index d456e55c..43939763 100644
 +                                        "voxy:seed_lod_stride",
 +                                        Component.translatable("voxy.config.general.seed_lod_stride"),
 +                                        ()->Integer.numberOfTrailingZeros(Math.max(4,
-+                                                Math.min(64, CFG.seedLodSampleStride))),
++                                                Math.min(128, CFG.seedLodSampleStride))),
 +                                        v->CFG.seedLodSampleStride=1<<v,
-+                                        new Range(2, 6, 1))
++                                        new Range(2, 7, 1))
 +                                        .setFormatter(v->Component.literal(Integer.toString(1<<v)))
 +                                        .setImpact(OptionImpact.HIGH)
 +                        ), new Group(
@@ -185,10 +185,10 @@ index d456e55c..43939763 100644
                                  new BoolOption(
 diff --git a/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java
 new file mode 100644
-index 00000000..c3be3318
+index 0000000000000000000000000000000000000000..a3de4c8d6d7e77f1470b0342849e6be569a96420
 --- /dev/null
 +++ b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java
-@@ -0,0 +1,1219 @@
+@@ -0,0 +1,1240 @@
 +package me.cortex.voxy.client.seedlod;
 +
 +import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
@@ -253,10 +253,11 @@ index 00000000..c3be3318
 +    private final ThreadPoolExecutor executor;
 +    private final AtomicInteger pendingTasks = new AtomicInteger();
 +    private final AtomicLong taskSequence = new AtomicLong();
-+    // Smallest planned stride per wave tile. Moving toward an existing prediction
-+    // upgrades it, while moving away never wastes work downgrading it.
-+    private final ConcurrentHashMap<Long, TilePlan> plannedTiles = new ConcurrentHashMap<>();
-+    private final ConcurrentHashMap<Long, Integer> completedTiles = new ConcurrentHashMap<>();
++    // Level-0 work remains a 64-block tile. N-sized work is keyed by a complete
++    // native Voxy section so a partial finer child can never hide an unfilled
++    // part of its coarser parent. Moving inward creates a different, finer key.
++    private final ConcurrentHashMap<WorkKey, TilePlan> plannedWork = new ConcurrentHashMap<>();
++    private final ConcurrentHashMap<WorkKey, Integer> completedWork = new ConcurrentHashMap<>();
 +
 +    private volatile Binding binding;
 +    private volatile int playerChunkX;
@@ -317,8 +318,8 @@ index 00000000..c3be3318
 +            current = new Binding(serverLevel, world, chunkSource.getGenerator(), chunkSource.randomState(),
 +                    serverLevel.getSeed());
 +            this.binding = current;
-+            this.plannedTiles.clear();
-+            this.completedTiles.clear();
++            this.plannedWork.clear();
++            this.completedWork.clear();
 +            this.scanInitialized = false;
 +            this.waveScanFinished = false;
 +            this.scannedTargetRadius = -1;
@@ -360,7 +361,7 @@ index 00000000..c3be3318
 +                || this.scannedNSizedGeneration != nSizedGeneration) {
 +            if (this.scannedTargetRadius != -1
 +                    && this.scannedNSizedGeneration != nSizedGeneration) {
-+                this.completedTiles.clear();
++                this.completedWork.clear();
 +            }
 +            this.waveRing = 0;
 +            this.waveScanFinished = false;
@@ -396,16 +397,17 @@ index 00000000..c3be3318
 +                    continue;
 +                }
 +
-+                long key = net.minecraft.world.level.ChunkPos.pack(tileX, tileZ);
 +                int stride = strideForDistance(
 +                        (int) Math.min(Integer.MAX_VALUE, distanceSquared), qualityDropoff);
-+                Integer completedStride = this.completedTiles.get(key);
++                int outputLevel = nSizedGeneration ? outputLevelForStride(stride) : 0;
++                WorkKey key = workKeyForTile(tileX, tileZ, outputLevel);
++                Integer completedStride = this.completedWork.get(key);
 +                if (completedStride != null && completedStride <= stride) {
 +                    continue;
 +                }
 +
 +                ringComplete = false;
-+                TilePlan previousPlan = this.plannedTiles.get(key);
++                TilePlan previousPlan = this.plannedWork.get(key);
 +                if (previousPlan != null && previousPlan.stride <= stride) {
 +                    continue;
 +                }
@@ -414,11 +416,15 @@ index 00000000..c3be3318
 +                    return;
 +                }
 +
-+                int outputLevel = nSizedGeneration ? outputLevelForStride(stride) : 0;
 +                TilePlan plan = new TilePlan(stride, outputLevel,
 +                        targetRadius, qualityDropoff, this.scanGeneration);
-+                this.plannedTiles.put(key, plan);
-+                this.submitWaveTile(current, key, plan, tileX, tileZ, Math.sqrt(distanceSquared));
++                boolean claimed = previousPlan == null
++                        ? this.plannedWork.putIfAbsent(key, plan) == null
++                        : this.plannedWork.replace(key, previousPlan, plan);
++                if (!claimed) {
++                    continue;
++                }
++                this.submitWaveWork(current, key, plan, Math.sqrt(distanceSquared));
 +                enqueued++;
 +            }
 +
@@ -430,8 +436,8 @@ index 00000000..c3be3318
 +        this.waveScanFinished = true;
 +    }
 +
-+    private void submitWaveTile(Binding taskBinding, long key, TilePlan plan,
-+                                int tileX, int tileZ, double distanceChunks) {
++    private void submitWaveWork(Binding taskBinding, WorkKey key, TilePlan plan,
++                                double distanceChunks) {
 +        this.pendingTasks.incrementAndGet();
 +        try {
 +            this.executor.execute(new PrioritizedTask(WAVE_PRIORITY, distanceChunks,
@@ -444,32 +450,31 @@ index 00000000..c3be3318
 +                        keepPlanned = false;
 +                        return;
 +                    }
-+                    if (this.plannedTiles.get(key) != plan) {
++                    if (this.plannedWork.get(key) != plan) {
 +                        keepPlanned = false;
 +                        return;
 +                    }
 +                    taskBinding.world.acquireRef();
 +                    acquired = true;
-+                    keepPlanned = generateWaveTile(
-+                            taskBinding, key, plan, tileX, tileZ);
++                    keepPlanned = generateWaveWork(taskBinding, key, plan);
 +                } catch (Throwable throwable) {
 +                    keepPlanned = false;
-+                    Logger.error("Seed LOD wave generation failed for tile "
-+                            + tileX + ", " + tileZ, throwable);
++                    Logger.error("Seed LOD wave generation failed for level "
++                            + key.outputLevel + " work " + key.x + ", " + key.z, throwable);
 +                } finally {
 +                    if (acquired && taskBinding.world.isLive()) {
 +                        taskBinding.world.releaseRef();
 +                    }
 +                    if (keepPlanned) {
-+                        this.completedTiles.merge(key, plan.stride, Math::min);
++                        this.completedWork.merge(key, plan.stride, Math::min);
 +                    }
-+                    this.plannedTiles.remove(key, plan);
++                    this.plannedWork.remove(key, plan);
 +                    this.pendingTasks.decrementAndGet();
 +                }
 +            }));
 +        } catch (RejectedExecutionException ignored) {
 +            this.pendingTasks.decrementAndGet();
-+            this.plannedTiles.remove(key, plan);
++            this.plannedWork.remove(key, plan);
 +        }
 +    }
 +
@@ -496,14 +501,14 @@ index 00000000..c3be3318
 +        return dx * dx + dz * dz;
 +    }
 +
-+    private boolean generateWaveTile(Binding binding, long tileKey, TilePlan plan,
-+                                     int tileX, int tileZ) {
++    private boolean generateWaveWork(Binding binding, WorkKey workKey, TilePlan plan) {
 +        int stride = plan.stride;
-+        int originChunkX = tileX * WAVE_TILE_CHUNKS;
-+        int originChunkZ = tileZ * WAVE_TILE_CHUNKS;
++        int workSizeChunks = workSizeChunks(plan.outputLevel);
++        int originChunkX = workKey.x * workSizeChunks;
++        int originChunkZ = workKey.z * workSizeChunks;
 +        int originBlockX = originChunkX << 4;
 +        int originBlockZ = originChunkZ << 4;
-+        int tileBlocks = WAVE_TILE_CHUNKS << 4;
++        int tileBlocks = workSizeChunks << 4;
 +        int minY = binding.level.getMinY();
 +        int maxY = binding.level.getMaxY();
 +        int maximumBlockX = originBlockX + tileBlocks - 1;
@@ -520,7 +525,7 @@ index 00000000..c3be3318
 +        // This keeps strides larger than the 64-block tile continuous across
 +        // tile borders while still sharing all queries inside the tile.
 +        for (int cellZ = minimumCellZ; cellZ <= maximumCellZ; cellZ++) {
-+            if (!isCurrentWaveTask(binding, tileKey, plan)) {
++            if (!isCurrentWaveTask(binding, workKey, plan)) {
 +                return false;
 +            }
 +            int sampleZ = cellZ - minimumCellZ;
@@ -536,15 +541,15 @@ index 00000000..c3be3318
 +        int centerX = this.playerChunkX;
 +        int centerZ = this.playerChunkZ;
 +        if (plan.outputLevel > 0) {
-+            if (!isCurrentWaveTask(binding, tileKey, plan)) return false;
++            if (!isCurrentWaveTask(binding, workKey, plan)) return false;
 +            double tileDistance = Math.sqrt(minimumDistanceSquaredToRegion(
-+                    centerX, centerZ, tileX, tileZ, WAVE_TILE_CHUNKS));
++                    centerX, centerZ, workKey.x, workKey.z, workSizeChunks));
 +            int vegetationDensity = vegetationDensityThreshold(
 +                    tileDistance, plan.targetRadius, plan.qualityDropoff);
 +            List<WorldUpdater.CoarseCell> coarseCells = buildCoarseTileFromGrid(
 +                    binding, originBlockX, originBlockZ, tileBlocks,
 +                    sampleGrid, plan.outputLevel, vegetationDensity);
-+            if (!coarseCells.isEmpty() && isCurrentWaveTask(binding, tileKey, plan)) {
++            if (!coarseCells.isEmpty() && isCurrentWaveTask(binding, workKey, plan)) {
 +                WorldUpdater.insertCoarseUpdate(binding.world, plan.outputLevel, coarseCells);
 +            }
 +            return true;
@@ -561,7 +566,7 @@ index 00000000..c3be3318
 +                distanceSquared(right.chunkX, right.chunkZ, centerX, centerZ)));
 +
 +        for (ChunkCoordinate chunk : chunks) {
-+            if (!isCurrentWaveTask(binding, tileKey, plan)) {
++            if (!isCurrentWaveTask(binding, workKey, plan)) {
 +                return false;
 +            }
 +            double chunkDistance = Math.sqrt(distanceSquared(
@@ -581,10 +586,24 @@ index 00000000..c3be3318
 +        return true;
 +    }
 +
-+    private boolean isCurrentWaveTask(Binding binding, long tileKey, TilePlan plan) {
++    private boolean isCurrentWaveTask(Binding binding, WorkKey workKey, TilePlan plan) {
 +        return this.binding == binding && this.scanGeneration == plan.generation
 +                && binding.world.isLive() && VoxyConfig.CONFIG.seedLodEnabled
-+                && this.plannedTiles.get(tileKey) == plan;
++                && this.plannedWork.get(workKey) == plan;
++    }
++
++    private static WorkKey workKeyForTile(int tileX, int tileZ, int outputLevel) {
++        if (outputLevel == 0) {
++            return new WorkKey(0, tileX, tileZ);
++        }
++        int tilesPerSection = workSizeChunks(outputLevel) / WAVE_TILE_CHUNKS;
++        return new WorkKey(outputLevel,
++                Math.floorDiv(tileX, tilesPerSection),
++                Math.floorDiv(tileZ, tilesPerSection));
++    }
++
++    private static int workSizeChunks(int outputLevel) {
++        return outputLevel == 0 ? WAVE_TILE_CHUNKS : 2 << outputLevel;
 +    }
 +
 +    private static long distanceSquared(int x, int z, int centerX, int centerZ) {
@@ -1288,7 +1307,8 @@ index 00000000..c3be3318
 +        if (configured <= 8) return 8;
 +        if (configured <= 16) return 16;
 +        if (configured <= 32) return 32;
-+        return 64;
++        if (configured <= 64) return 64;
++        return 128;
 +    }
 +
 +    private static int sanitizeQualityDropoff(int configured) {
@@ -1310,7 +1330,7 @@ index 00000000..c3be3318
 +        if (!VoxyConfig.CONFIG.seedLodAdaptiveQuality || maximum == 4) {
 +            return maximum;
 +        }
-+        int tier = Math.min(4, (int) (Math.sqrt(distanceSquared)
++        int tier = Math.min(5, (int) (Math.sqrt(distanceSquared)
 +                / sanitizeQualityDropoff(qualityDropoff)));
 +        return Math.min(maximum, 4 << tier);
 +    }
@@ -1347,8 +1367,8 @@ index 00000000..c3be3318
 +        this.stopped = true;
 +        this.binding = null;
 +        this.executor.shutdownNow();
-+        this.plannedTiles.clear();
-+        this.completedTiles.clear();
++        this.plannedWork.clear();
++        this.completedWork.clear();
 +    }
 +
 +    private static final class Binding {
@@ -1379,6 +1399,7 @@ index 00000000..c3be3318
 +    private record ChunkCoordinate(int chunkX, int chunkZ) {}
 +    private record SampleGrid(Sample[] samples, int width, int height,
 +                              int minimumCellX, int minimumCellZ, int stride) {}
++    private record WorkKey(int outputLevel, int x, int z) {}
 +    private record TilePlan(int stride, int outputLevel, int targetRadius,
 +                            int qualityDropoff, long generation) {}
 +    private record Sample(int surfaceY, int floorY, Holder<Biome> biome,
@@ -1409,7 +1430,7 @@ index 00000000..c3be3318
 +    }
 +}
 diff --git a/src/main/java/me/cortex/voxy/common/world/SaveLoadSystem3.java b/src/main/java/me/cortex/voxy/common/world/SaveLoadSystem3.java
-index 0a6d31c2..9d424aa0 100644
+index 0a6d31c2e2a8a472bd4ee9d74dbd338e1ee16efa..9d424aa0b7a4d73d84d2f290daef4a1060165e6b 100644
 --- a/src/main/java/me/cortex/voxy/common/world/SaveLoadSystem3.java
 +++ b/src/main/java/me/cortex/voxy/common/world/SaveLoadSystem3.java
 @@ -69,7 +69,8 @@ public class SaveLoadSystem3 {
@@ -1431,7 +1452,7 @@ index 0a6d31c2..9d424aa0 100644
  
          final var blockData = section.data;
 diff --git a/src/main/java/me/cortex/voxy/common/world/WorldSection.java b/src/main/java/me/cortex/voxy/common/world/WorldSection.java
-index c4a82828..0b56baed 100644
+index c4a82828a214a0006df1a4b6b7e5d0524a15c2d5..0b56baed1db02d464555d5c8aa115aa38a713dd8 100644
 --- a/src/main/java/me/cortex/voxy/common/world/WorldSection.java
 +++ b/src/main/java/me/cortex/voxy/common/world/WorldSection.java
 @@ -19,6 +19,7 @@ public final class WorldSection {
@@ -1501,7 +1522,7 @@ index c4a82828..0b56baed 100644
 \ No newline at end of file
 +}
 diff --git a/src/main/java/me/cortex/voxy/common/world/WorldUpdater.java b/src/main/java/me/cortex/voxy/common/world/WorldUpdater.java
-index 1ab705b9..b56a3b82 100644
+index 1ab705b92f2ba5c6dd15f5b0326d8cfd651433ca..b56a3b82426876cb5a546b193c17f790f9fa1e36 100644
 --- a/src/main/java/me/cortex/voxy/common/world/WorldUpdater.java
 +++ b/src/main/java/me/cortex/voxy/common/world/WorldUpdater.java
 @@ -1,7 +1,12 @@
@@ -1805,7 +1826,7 @@ index 1ab705b9..b56a3b82 100644
      private static long insertSectionLvlIntoWorld(VoxelizedSection section, WorldSection worldSection) {
          final long[] vdat = section.section;
 diff --git a/src/main/resources/assets/voxy/lang/en_us.json b/src/main/resources/assets/voxy/lang/en_us.json
-index 08d1299b..1617fef9 100644
+index 08d1299be583fca45559a359469e8ba239d9a52e..67477e3af665bba095cba748768c776b7aaff9e4 100644
 --- a/src/main/resources/assets/voxy/lang/en_us.json
 +++ b/src/main/resources/assets/voxy/lang/en_us.json
 @@ -3,6 +3,7 @@
@@ -1827,7 +1848,7 @@ index 08d1299b..1617fef9 100644
 +  "voxy.config.general.seed_lod_distance.tooltip": "Prediction radius from 32 to 1024 chunks. Very large values can take a long time and use substantial Voxy cache space.",
 +
 +  "voxy.config.general.seed_lod_stride": "Seed LOD maximum sample stride",
-+  "voxy.config.general.seed_lod_stride.tooltip": "Farthest terrain sampling interval from 4 to 64 blocks. Adaptive quality adds progressively cheaper 4, 8, 16, 32, and 64-block bands toward the horizon. Larger strides cannot reduce the 4 by 4-chunk tile below its required 3 by 3 sample grid.",
++  "voxy.config.general.seed_lod_stride.tooltip": "Farthest terrain sampling interval from 4 to 128 blocks. Adaptive quality adds progressively cheaper 4, 8, 16, 32, 64, and 128-block bands toward the horizon. Stride 128 is the useful cutoff for complete native N=16 sections before sampling gains diminish too far.",
 +
 +  "voxy.config.general.seed_lod_adaptive_quality": "Adaptive seed LOD quality",
 +  "voxy.config.general.seed_lod_adaptive_quality.tooltip": "Starts at stride 4 near the player and increases the sampling interval at each configured quality band.",
@@ -1839,7 +1860,7 @@ index 08d1299b..1617fef9 100644
 +  "voxy.config.general.seed_lod_smoothing.tooltip": "Reconstructs continuous terrain surfaces between sparse seed samples. Stride 4 and 8 use one-block columns, while N-sized bands emit larger cells. Abrupt height changes remain cliff-like.",
 +
 +  "voxy.config.general.seed_lod_n_sized_generation": "Direct N-sized generation",
-+  "voxy.config.general.seed_lod_n_sized_generation.tooltip": "Generates distant predictions directly at Voxy's required detail level instead of constructing every one-block column first. Complete coarse fallbacks are expanded before finer children become visible.",
++  "voxy.config.general.seed_lod_n_sized_generation.tooltip": "Generates distant predictions directly at Voxy's required detail level instead of constructing every one-block column first. N-sized jobs fill complete aligned Voxy sections so quality transitions cannot expose partially generated children.",
 +
 +  "voxy.config.general.seed_lod_vegetation": "Predicted distant vegetation",
 +  "voxy.config.general.seed_lod_vegetation.tooltip": "Adds cheap deterministic biome-aware tree silhouettes. Density fades continuously with distance instead of ending at a visible border.",

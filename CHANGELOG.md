@@ -1,6 +1,17 @@
 # Changelog
 
-## seedlod.12: current patch
+## seedlod.13: current patch
+
+- Fixed the rectangular gaps between N-sized quality bands.
+- Replaced partial 64-block coarse patches with complete horizontally aligned native Voxy sections.
+- Batched stride-16 work into 128-block sections, stride-32 work into 256-block sections, and stride-64 or stride-128 work into 512-block sections.
+- Deduplicated each aligned N-sized section across all worker threads. This reduces far-field task and hierarchy-publication counts by 4 times at level 2, 16 times at level 3, and 64 times at level 4 compared with seedlod.12's 64-block patch jobs.
+- Kept the player-centered 64-block scan wave for ordering and for stride 4 or 8 detail, while coalescing the farther scan tiles into complete native work units.
+- Restored stride 128 as the maximum performance tier. With the new 512-block level-4 work unit, its cold interpolation grid is 6 by 6 instead of stride 64's 10 by 10, reducing far-section generator queries from 100 to 36 while retaining N=16 output cells.
+- Kept stride 64 as the default maximum for stronger horizon detail. Stride 128 is an opt-in performance setting.
+- Kept stride 256 out of the slider. It saves only 20 more cold queries per level-4 section after stride 128 while discarding substantially more terrain detail, which is the start of the practical diminishing-return range.
+
+## seedlod.12
 
 - Added optional direct N-sized generation, enabled by default.
 - Kept stride 4 and 8 on the highest-quality level-0 path.
