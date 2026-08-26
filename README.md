@@ -23,7 +23,7 @@ This project is unofficial, unsupported by MCRcortex, and not affiliated with Mo
 - Worker-thread changes take effect while the world is open.
 - Begins at the tile containing the player. Existing real chunks fill the center while predictions continue directly outward.
 - Marks every prediction so later predictions may replace it while real ingested chunk data remains authoritative.
-- Supports prediction distances from 32 to 1024 chunks and sample strides of 4, 8, 16, 32, 64, or 128 blocks.
+- Supports prediction distances from 32 to 1024 chunks and sample strides of 4, 8, 16, 32, or 64 blocks.
 - Places all experimental controls on a dedicated Seed LOD settings page instead of crowding Voxy's General page.
 
 ### Player-centered connected loading wave
@@ -38,7 +38,7 @@ This project is unofficial, unsupported by MCRcortex, and not affiliated with Mo
 
 ### Distance-based quality
 
-- With adaptive quality enabled, nearby tiles use stride 4 and outward bands progressively use stride 8, 16, 32, 64, and up to 128.
+- With adaptive quality enabled, nearby tiles use stride 4 and outward bands progressively use stride 8, 16, 32, and up to 64.
 - A configurable band width from 4 to 64 chunks controls when each quality drop happens. A width of 4 doubles the stride every 4 chunks, while 64 preserves each tier for 64 chunks.
 - Sampling is aligned to a global world-space lattice, so strides larger than the 64-block loading tile remain continuous across tile borders.
 - The selected quality is decided before a tile is generated, so there is no destructive coarse-parent replacement phase.
@@ -79,9 +79,9 @@ This is useful for datapacks such as Tectonic, Terralith, and other vanilla-styl
 | Setting | Recommendation | Notes |
 |---|---:|---|
 | Seed LOD distance | `192` | Radius in chunks |
-| Maximum sample stride | `128` | Fastest horizon; global alignment and smoothing prevent tile seams |
+| Maximum sample stride | `64` | Fastest useful horizon tier for the 4 by 4-chunk wave tile |
 | Seed LOD threads | `4` | Changes take effect immediately |
-| Adaptive quality | On | Stride 4 nearby, then 8, 16, 32, 64, and 128 toward the horizon |
+| Adaptive quality | On | Stride 4 nearby, then 8, 16, 32, and 64 toward the horizon |
 | Adaptive quality band width | `32` | Each stride tier lasts 32 chunks |
 | Smooth sampled terrain | On | Large quality gain for little additional sampling cost |
 | Predicted vegetation | On | Cheap visual proxies |
@@ -97,11 +97,13 @@ The wave loader shares globally aligned generator samples across each 64 by 64-b
 - 100 samples at stride 8.
 - 36 samples at stride 16.
 - 16 samples at stride 32.
-- 9 samples at stride 64 or 128.
+- 9 samples at stride 64.
 
-At stride 128, the far tile performs about 11 times fewer generator queries than a stride-8 tile. A simple area-weighted model for the default six adaptive bands estimates roughly 6 times fewer generator queries than the seedlod.8 adaptive profile. This is a sampling estimate, not an end-to-end benchmark.
+At stride 64, the far tile performs about 11 times fewer generator queries than a stride-8 tile. A simple area-weighted model for the default five adaptive bands estimates roughly 6 times fewer generator queries than the seedlod.8 adaptive profile. This is a sampling estimate, not an end-to-end benchmark.
 
-Seedlod.10 also removes a second bottleneck that sample stride alone did not fix. On flat land, older versions filled roughly one stride of solid blocks below every surface column. The four-block shell reduces flat-column voxel writes by about 2 times at stride 8, 4 times at stride 16, 8 times at stride 32, 16 times at stride 64, and 32 times at stride 128. Exposed cliff columns still extend far enough to close the visible face, so actual savings depend on terrain shape.
+Stride 64 is the useful cutoff for the current tile architecture. The 64 by 64-block tile plus its interpolation halo requires at least a 3 by 3 sample grid. Stride 128 still requires that same grid and the same 9 generator queries, while reconstruction, mipping, storage, and meshing also remain unchanged. It therefore provides worse terrain for no meaningful speed gain.
+
+Seedlod.10 also removes a second bottleneck that sample stride alone did not fix. On flat land, older versions filled roughly one stride of solid blocks below every surface column. The four-block shell reduces flat-column voxel writes by about 2 times at stride 8, 4 times at stride 16, 8 times at stride 32, and 16 times at stride 64. Exposed cliff columns still extend far enough to close the visible face, so actual savings depend on terrain shape.
 
 The largest savings happen at the horizon, which also contains most of the tiles. Terrain becomes visible near the player immediately and expands as workers finish each gated ring.
 
@@ -138,7 +140,7 @@ Exact trees and structures would require most of Minecraft's generation pipeline
 - Multiplayer clients do not receive the server's complete seed/generator state
 - No exact structures, caves, decorations, player edits, or exact decorated trees
 - The far horizon uses the configured coarse sampling stride, but still travels through ordinary Voxy chunk ingestion
-- A 1024-chunk radius contains millions of chunk positions. The slider allows it, but generation time and cache usage remain substantial even at stride 128
+- A 1024-chunk radius contains millions of chunk positions. The slider allows it, but generation time and cache usage remain substantial even at stride 64
 - Custom `ChunkGenerator` implementations fall back to the compatibility column path
 - Experimental code: back up important worlds and Voxy caches
 

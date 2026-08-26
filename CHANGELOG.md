@@ -1,6 +1,13 @@
 # Changelog
 
-## seedlod.10: current patch
+## seedlod.11: current patch
+
+- Set stride 64 as the maximum useful sampling interval.
+- Removed stride 128 from the settings slider and adaptive quality tiers.
+- Clamped older configurations containing stride 128 to 64.
+- Documented the sampling floor: both stride 64 and stride 128 require the same 3 by 3 interpolation grid and 9 generator queries for a 4 by 4-chunk wave tile, so 128 reduced quality without improving sampling speed.
+
+## seedlod.10
 
 - Moved every experimental seed-generation control into a dedicated Seed LOD page in Voxy's settings.
 - Increased the maximum prediction distance from 512 to 1024 chunks.
