@@ -32,7 +32,8 @@ This project is unofficial, unsupported by MCRcortex, and not affiliated with Mo
 - Schedules complete square rings from nearest to farthest. Ring N+1 cannot start until every in-range tile in ring N finishes, so unfinished work stays on the outer edge instead of leaving holes behind it.
 - Sorts the 16 chunks inside each tile by player distance before inserting them.
 - Shares one generator sample grid across the whole tile, removing repeated chunk-border and halo queries.
-- Uses Voxy's ordinary bottom-up `WorldUpdater` path for every predicted chunk. It does not inject giant parent slabs into the top LOD.
+- Stride 16 through 64 also share generator samples between adjacent tiles through a bounded world-aligned cache.
+- Uses ordinary bottom-up chunk insertion at stride 4 and 8, then direct N-sized Voxy cells at stride 16 through 64.
 - Keeps real ingested chunks authoritative and safely upgrades predicted tiles when the player moves closer.
 - Recenters after four chunks of movement. A teleport of at least 32 chunks cancels stale queued work and begins a new wave at the destination.
 
@@ -41,14 +42,25 @@ This project is unofficial, unsupported by MCRcortex, and not affiliated with Mo
 - With adaptive quality enabled, nearby tiles use stride 4 and outward bands progressively use stride 8, 16, 32, and up to 64.
 - A configurable band width from 4 to 64 chunks controls when each quality drop happens. A width of 4 doubles the stride every 4 chunks, while 64 preserves each tier for 64 chunks.
 - Sampling is aligned to a global world-space lattice, so strides larger than the 64-block loading tile remain continuous across tile borders.
-- The selected quality is decided before a tile is generated, so there is no destructive coarse-parent replacement phase.
+- The selected quality and output size are decided before a tile is generated.
 - Moving closer can regenerate an existing predicted tile at a finer stride. Moving away does not waste time downgrading completed data.
 - Voxy still chooses its rendered screen-space LOD normally after the predicted chunks enter the cache.
+
+### Direct N-sized generation
+
+- Optional and enabled by default. Disable it to retain seedlod.11-style level-0 reconstruction.
+- Stride 4 and 8 keep one-block output for the two highest-quality bands.
+- Stride 16 generates N=4 cells directly at Voxy level 2.
+- Stride 32 generates N=8 cells directly at Voxy level 3.
+- Stride 64 generates N=16 cells directly at Voxy level 4.
+- Coarse leaves have their own persistent presence state instead of falsely claiming finer children exist.
+- Before refinement becomes visible, a complete finer child is initialized by expanding its coarse parent. Fine predictions or authoritative real chunks then overlay that background.
+- Direct writes skip regions already owned by finer children, so coarse work cannot replace real or higher-quality data.
 
 ### Terrain quality
 
 - Optional adaptive sampling starts at stride 4 and progressively increases through power-of-two bands toward the configured horizon maximum.
-- Optional terrain smoothing reconstructs one-block columns between sparse samples.
+- Optional terrain smoothing reconstructs continuous surfaces between sparse samples. The two nearest quality bands use one-block columns, while direct N-sized bands emit larger cells.
 - Large height changes use continuous slope-aware interpolation, keeping cliffs steep without creating stride-sized towers.
 - Most predicted terrain is only a four-block surface shell. A one-block reconstruction halo identifies exposed drops and extends only those visible cliff edges to the lower adjacent surface.
 - Predicted outdoor air carries full skylight, preventing black terrain in daylight.
@@ -83,6 +95,7 @@ This is useful for datapacks such as Tectonic, Terralith, and other vanilla-styl
 | Seed LOD threads | `4` | Changes take effect immediately |
 | Adaptive quality | On | Stride 4 nearby, then 8, 16, 32, and 64 toward the horizon |
 | Adaptive quality band width | `32` | Each stride tier lasts 32 chunks |
+| Direct N-sized generation | On | Skips unnecessary fine reconstruction in stride 16 through 64 bands |
 | Smooth sampled terrain | On | Large quality gain for little additional sampling cost |
 | Predicted vegetation | On | Cheap visual proxies |
 | Fast datapack terrain sampling | On | Recommended for noise-settings datapacks |
@@ -91,7 +104,7 @@ The normal Voxy render distance must also be large enough to display the predict
 
 ## Performance model
 
-The wave loader shares globally aligned generator samples across each 64 by 64-block tile. Including the interpolation and terrain-skirt halo, a tile needs:
+Without cross-tile reuse, each 64 by 64-block tile and its interpolation halo needs:
 
 - 324 generator samples at stride 4.
 - 100 samples at stride 8.
@@ -101,14 +114,18 @@ The wave loader shares globally aligned generator samples across each 64 by 64-b
 
 At stride 64, the far tile performs about 11 times fewer generator queries than a stride-8 tile. A simple area-weighted model for the default five adaptive bands estimates roughly 6 times fewer generator queries than the seedlod.8 adaptive profile. This is a sampling estimate, not an end-to-end benchmark.
 
+Seedlod.12 caches the globally aligned stride-16-and-higher samples across adjacent tiles. Over a large connected region, the amortized new generator samples approach 16 per tile at stride 16, 4 at stride 32, and 1 at stride 64. Compared with independently sampling every tile halo, that is approximately 2.25, 4, and 9 times fewer generator queries respectively. The cache is bounded at 500,000 samples.
+
 Stride 64 is the useful cutoff for the current tile architecture. The 64 by 64-block tile plus its interpolation halo requires at least a 3 by 3 sample grid. Stride 128 still requires that same grid and the same 9 generator queries, while reconstruction, mipping, storage, and meshing also remain unchanged. It therefore provides worse terrain for no meaningful speed gain.
 
 Seedlod.10 also removes a second bottleneck that sample stride alone did not fix. On flat land, older versions filled roughly one stride of solid blocks below every surface column. The four-block shell reduces flat-column voxel writes by about 2 times at stride 8, 4 times at stride 16, 8 times at stride 32, and 16 times at stride 64. Exposed cliff columns still extend far enough to close the visible face, so actual savings depend on terrain shape.
 
+N-sized generation removes most of the remaining far-field reconstruction. A 64 by 64-block tile contains 4,096 one-block horizontal columns. Direct output reduces that to 256 N=4 columns at stride 16, 64 N=8 columns at stride 32, and 16 N=16 columns at stride 64. These are theoretical horizontal output reductions of 16, 64, and 256 times before vertical cliff, water, vegetation, hierarchy, storage, and meshing costs.
+
 The largest savings happen at the horizon, which also contains most of the tiles. Terrain becomes visible near the player immediately and expands as workers finish each gated ring.
 
-- Smoothing adds interpolation work but no additional generator queries. The one-block cliff halo raises reconstructed column evaluations from 256 to 324 per chunk, a small arithmetic cost used to avoid deep-filling non-edge columns.
-- Every tile follows Voxy's normal hierarchy-building path, eliminating the unsupported top-level parent replacement that caused slabs and rectangular holes in seedlod.6 and seedlod.7.
+- Smoothing adds interpolation work but no additional generator queries.
+- Direct coarse leaves are persisted separately from their finer-child mask. Refinement expands a complete parent fallback into the child before publishing it, addressing the ownership error that caused slabs and rectangular holes in seedlod.6 and seedlod.7.
 - Ordinary movement keeps nearby queued work alive. Long teleports discard stale work and reprioritize the destination.
 - Changing the maximum stride or adaptive-quality toggle while a world is open immediately cancels stale plans and rescans the wave at the new quality.
 - Vegetation is hash-thinned before the more expensive local-minimum test. Density falls continuously with distance but never ends at a quality-band border.
@@ -119,7 +136,7 @@ The largest savings happen at the horizon, which also contains most of the tiles
 - Fast datapack sampling is expected to improve expensive noise-datapack sampling by roughly 1.5 to 4 times compared with this patch's former full-column approach. This is an engineering estimate, not a universal benchmark.
 - Tectonic and similar packs may remain slower than vanilla because their density functions are inherently more expensive.
 
-This is a scheduling and sampling acceleration, not a custom planetary renderer. A 192-chunk radius still contains roughly 115,000 chunks, and Voxy still has to reconstruct columns, mip them, store them, and build geometry. Expect a much cleaner and faster outward fill, not the instant 65,536-block coverage shown by a purpose-built heightmap LOD renderer.
+This is still not a custom planetary renderer. A 192-chunk radius contains roughly 115,000 chunk positions, and Voxy must still sample terrain, store sections, and build geometry. N-sized output removes most fine reconstruction at long distances, but exact speedups depend heavily on the generator, storage, CPU, and enabled vegetation.
 
 ### GPU offload finding
 
@@ -127,7 +144,7 @@ Voxy already uses OpenGL compute for visibility, node management, and rendering.
 
 Offloading only interpolation would still require uploading samples and reading reconstructed block results back to Java before Voxy can assign mapping IDs, build its CPU voxel hierarchy, and store the cache. That readback introduces synchronization and can stall the render thread, so this patch does not provide a fake GPU toggle that is likely to run slower. A real generic GPU generator would require a separate shader compiler for Minecraft density functions and surface rules, plus a GPU-native Voxy ingestion path. That is a major renderer project rather than a safe setting.
 
-Seedlod.10 instead applies hardware-acceleration thinking where this architecture benefits: fewer generator calls, fewer mapper locks, fewer voxel writes, fewer vertical sections, bounded background threads, and Voxy's existing GPU renderer after ingestion.
+The patch instead applies hardware-acceleration thinking where this architecture benefits: shared generator samples, native N-sized output, fewer mapper locks, fewer voxel writes, fewer vertical sections, bounded background threads, and Voxy's existing GPU renderer after ingestion.
 
 Exact trees and structures would require most of Minecraft's generation pipeline through the `FEATURES` stage and a working neighborhood of temporary chunks. This patch deliberately stays approximate to retain its main performance advantage.
 
@@ -139,7 +156,7 @@ Exact trees and structures would require most of Minecraft's generation pipeline
 - Single-player Overworld only
 - Multiplayer clients do not receive the server's complete seed/generator state
 - No exact structures, caves, decorations, player edits, or exact decorated trees
-- The far horizon uses the configured coarse sampling stride, but still travels through ordinary Voxy chunk ingestion
+- Direct N-sized generation is new experimental hierarchy code. Disable it if a renderer or storage compatibility problem appears
 - A 1024-chunk radius contains millions of chunk positions. The slider allows it, but generation time and cache usage remain substantial even at stride 64
 - Custom `ChunkGenerator` implementations fall back to the compatibility column path
 - Experimental code: back up important worlds and Voxy caches
@@ -171,15 +188,15 @@ The patch is available at [`patches/voxy-seed-lod-mc26.2.patch`](patches/voxy-se
 
 ## Cache migration
 
-Seedlod.6 and seedlod.7 wrote experimental data directly into Voxy's top LOD. Seedlod.8 and later deliberately remove that path, but an existing cache may still contain those old slabs. For a clean current-version test, close Minecraft, back up the world, and remove only that world's `<world save>/voxy` derived-cache folder before launching the new build.
+Seedlod.12 introduces a new persistent coarse-leaf layout. A clean cache is required when upgrading from any earlier seedlod version so old bottom-up predictions do not hide the new N-sized path. Close Minecraft, back up the world, and remove only that world's `<world save>/voxy` derived-cache folder before launching seedlod.12.
 
-This cleanup is also required if the original unmarked seedlod.1 experiment ever generated the cache. Predictions from the ordinary chunk path in seedlod.2 through seedlod.5 carry a marker and can be replaced automatically.
+This cleanup is also required for caches touched by seedlod.6 and seedlod.7 direct-parent experiments or the original unmarked seedlod.1 experiment.
 
 Do not delete the complete world folder.
 
 ## Verification
 
-The published patch version compiled successfully and passed Voxy's Gradle build, test task, resource processing, and access-widener validation before publication. Runtime visuals have been iterated through user testing; hardware, datapacks, and seeds will still vary.
+The published patch version compiled successfully and passed Voxy's Gradle build, test task, resource processing, and access-widener validation before publication. Seedlod.12's N-sized hierarchy is newly implemented and still needs broad in-game runtime testing across movement, restarts, seeds, and datapacks.
 
 ## Contributing
 

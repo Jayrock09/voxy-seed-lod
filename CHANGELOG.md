@@ -1,6 +1,19 @@
 # Changelog
 
-## seedlod.11: current patch
+## seedlod.12: current patch
+
+- Added optional direct N-sized generation, enabled by default.
+- Kept stride 4 and 8 on the highest-quality level-0 path.
+- Mapped stride 16 directly to N=4 cells, stride 32 to N=8 cells, and stride 64 to N=16 cells.
+- Added persistent coarse-leaf state to Voxy sections so a non-empty direct LOD can exist without pretending it already owns finer children.
+- Added parent-to-child fallback expansion before refinement. A complete child background is published before finer predictions or real chunks overlay it, preventing partial children from cutting rectangular air holes out of coarse parents.
+- Added direct coarse-cell mipping and child-existence propagation through Voxy's stored hierarchy.
+- Added a world-aligned shared sample cache for stride 16 through 64. Adjacent tiles reuse generator results instead of repeating halo queries.
+- Kept ordinary chunks authoritative and made direct coarse writes skip octants already owned by finer children.
+- Added coarse biome-aware vegetation cells and retained the flat datapack sea-level water model.
+- Added an in-game switch to disable N-sized output while retaining shared sampling and the seedlod.11 level-0 path.
+
+## seedlod.11
 
 - Set stride 64 as the maximum useful sampling interval.
 - Removed stride 128 from the settings slider and adaptive quality tiers.
