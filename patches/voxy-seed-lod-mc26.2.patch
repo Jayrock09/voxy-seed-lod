@@ -1,5 +1,5 @@
 diff --git a/gradle.properties b/gradle.properties
-index a25ea295a8fac1778a82242a7570d28587a17905..9f048c23e3aadd318969f07fc80c0fc2dacdf1ea 100644
+index a25ea295a8fac1778a82242a7570d28587a17905..71beb494dbda4e05878a1e4241aaa94b3e5c7bcd 100644
 --- a/gradle.properties
 +++ b/gradle.properties
 @@ -29,6 +29,6 @@ nvidium_version=0.4.3-beta13-26.1
@@ -7,7 +7,7 @@ index a25ea295a8fac1778a82242a7570d28587a17905..9f048c23e3aadd318969f07fc80c0fc2
  
  # Mod Properties
 -mod_version = 0.2.19-beta
-+mod_version = 0.2.19-beta-seedlod.13
++mod_version = 0.2.19-beta-seedlod.14
  maven_group = me.cortex
 -archives_base_name = voxy
 \ No newline at end of file
@@ -89,15 +89,16 @@ index 2dab3784c8f93626f34d38f9cbdfc67b41de7e5a..fb0f1e73ea12f4e28c11e2a359432edd
          //Free the render resources cache since the entire instance is freed
          RenderResourceReuse.clearResources();
 diff --git a/src/main/java/me/cortex/voxy/client/config/VoxyConfig.java b/src/main/java/me/cortex/voxy/client/config/VoxyConfig.java
-index b2f5eefb81627cb07dd13f6eebe1a00eef517577..84c59001cbb5c6ce128de098a9a24244805eb967 100644
+index b2f5eefb81627cb07dd13f6eebe1a00eef517577..e1f41d7e31779a7a0d13c98a48add90e9676aa79 100644
 --- a/src/main/java/me/cortex/voxy/client/config/VoxyConfig.java
 +++ b/src/main/java/me/cortex/voxy/client/config/VoxyConfig.java
-@@ -35,6 +35,16 @@ public class VoxyConfig {
+@@ -35,6 +35,17 @@ public class VoxyConfig {
      public float subDivisionSize = 64;
      public String fogMode;
      public boolean dontUseSodiumBuilderThreads = false;
 +    public boolean seedLodEnabled = false;
 +    public int seedLodRenderDistance = 192;
++    public int seedLodMinimumSampleStride = 4;
 +    public int seedLodSampleStride = 64;
 +    public boolean seedLodAdaptiveQuality = true;
 +    public int seedLodQualityDropoff = 32;
@@ -110,10 +111,10 @@ index b2f5eefb81627cb07dd13f6eebe1a00eef517577..84c59001cbb5c6ce128de098a9a24244
  
      public SSAO.SSAOMode getSSAOMode() {
 diff --git a/src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java b/src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java
-index d456e55c120a93d2a8c223b86c8eedff073cbd8b..6b7c082625d492d4d348e33f93aa961dd38bfa30 100644
+index d456e55c120a93d2a8c223b86c8eedff073cbd8b..2d4a8365e95f1229b4a41d71766c376bd4c1a2e3 100644
 --- a/src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java
 +++ b/src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java
-@@ -79,6 +79,69 @@ public class VoxyConfigMenu implements ConfigEntryPoint {
+@@ -79,6 +79,78 @@ public class VoxyConfigMenu implements ConfigEntryPoint {
                                          ()->CFG.ingestEnabled, v->CFG.ingestEnabled=v)
                          )
                  ).setEnabler("voxy:enabled"),
@@ -135,20 +136,29 @@ index d456e55c120a93d2a8c223b86c8eedff073cbd8b..6b7c082625d492d4d348e33f93aa961d
 +                                        ()->CFG.seedLodAdaptiveQuality, v->CFG.seedLodAdaptiveQuality=v)
 +                                        .setImpact(OptionImpact.HIGH),
 +                                new IntOption(
++                                        "voxy:seed_lod_minimum_stride",
++                                        Component.translatable("voxy.config.general.seed_lod_minimum_stride"),
++                                        ()->Integer.numberOfTrailingZeros(Math.max(4,
++                                                Math.min(16, CFG.seedLodMinimumSampleStride))),
++                                        v->CFG.seedLodMinimumSampleStride=1<<v,
++                                        new Range(2, 4, 1))
++                                        .setFormatter(v->Component.literal(Integer.toString(1<<v)))
++                                        .setImpact(OptionImpact.HIGH),
++                                new IntOption(
++                                        "voxy:seed_lod_stride",
++                                        Component.translatable("voxy.config.general.seed_lod_stride"),
++                                        ()->Integer.numberOfTrailingZeros(Math.max(32,
++                                                Math.min(128, CFG.seedLodSampleStride))),
++                                        v->CFG.seedLodSampleStride=1<<v,
++                                        new Range(5, 7, 1))
++                                        .setFormatter(v->Component.literal(Integer.toString(1<<v)))
++                                        .setImpact(OptionImpact.HIGH),
++                                new IntOption(
 +                                        "voxy:seed_lod_quality_dropoff",
 +                                        Component.translatable("voxy.config.general.seed_lod_quality_dropoff"),
 +                                        ()->Math.max(4, Math.min(64, CFG.seedLodQualityDropoff)),
 +                                        v->CFG.seedLodQualityDropoff=v,
 +                                        new Range(4, 64, 4))
-+                                        .setImpact(OptionImpact.HIGH),
-+                                new IntOption(
-+                                        "voxy:seed_lod_stride",
-+                                        Component.translatable("voxy.config.general.seed_lod_stride"),
-+                                        ()->Integer.numberOfTrailingZeros(Math.max(4,
-+                                                Math.min(128, CFG.seedLodSampleStride))),
-+                                        v->CFG.seedLodSampleStride=1<<v,
-+                                        new Range(2, 7, 1))
-+                                        .setFormatter(v->Component.literal(Integer.toString(1<<v)))
 +                                        .setImpact(OptionImpact.HIGH)
 +                        ), new Group(
 +                                new BoolOption(
@@ -185,10 +195,10 @@ index d456e55c120a93d2a8c223b86c8eedff073cbd8b..6b7c082625d492d4d348e33f93aa961d
                                  new BoolOption(
 diff --git a/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..a3de4c8d6d7e77f1470b0342849e6be569a96420
+index 0000000000000000000000000000000000000000..772efa9ddc50e5a3650f4299b4f344a1cf8df0e9
 --- /dev/null
 +++ b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java
-@@ -0,0 +1,1240 @@
+@@ -0,0 +1,1266 @@
 +package me.cortex.voxy.client.seedlod;
 +
 +import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
@@ -270,6 +280,7 @@ index 0000000000000000000000000000000000000000..a3de4c8d6d7e77f1470b0342849e6be5
 +    private boolean scanInitialized;
 +    private boolean waveScanFinished;
 +    private int scannedTargetRadius = -1;
++    private int scannedMinimumStride = -1;
 +    private int scannedMaximumStride = -1;
 +    private int scannedQualityDropoff = -1;
 +    private boolean scannedAdaptiveQuality;
@@ -323,6 +334,7 @@ index 0000000000000000000000000000000000000000..a3de4c8d6d7e77f1470b0342849e6be5
 +            this.scanInitialized = false;
 +            this.waveScanFinished = false;
 +            this.scannedTargetRadius = -1;
++            this.scannedMinimumStride = -1;
 +            this.scannedMaximumStride = -1;
 +            this.scannedQualityDropoff = -1;
 +            this.scanGeneration++;
@@ -350,11 +362,14 @@ index 0000000000000000000000000000000000000000..a3de4c8d6d7e77f1470b0342849e6be5
 +        }
 +
 +        int targetRadius = Math.max(32, VoxyConfig.CONFIG.seedLodRenderDistance);
-+        int maximumStride = sanitizeStride(VoxyConfig.CONFIG.seedLodSampleStride);
++        int minimumStride = sanitizeMinimumStride(
++                VoxyConfig.CONFIG.seedLodMinimumSampleStride);
++        int maximumStride = sanitizeMaximumStride(VoxyConfig.CONFIG.seedLodSampleStride);
 +        int qualityDropoff = sanitizeQualityDropoff(VoxyConfig.CONFIG.seedLodQualityDropoff);
 +        boolean adaptiveQuality = VoxyConfig.CONFIG.seedLodAdaptiveQuality;
 +        boolean nSizedGeneration = VoxyConfig.CONFIG.seedLodNSizedGeneration;
 +        if (this.scannedTargetRadius != targetRadius
++                || this.scannedMinimumStride != minimumStride
 +                || this.scannedMaximumStride != maximumStride
 +                || this.scannedQualityDropoff != qualityDropoff
 +                || this.scannedAdaptiveQuality != adaptiveQuality
@@ -366,6 +381,7 @@ index 0000000000000000000000000000000000000000..a3de4c8d6d7e77f1470b0342849e6be5
 +            this.waveRing = 0;
 +            this.waveScanFinished = false;
 +            this.scannedTargetRadius = targetRadius;
++            this.scannedMinimumStride = minimumStride;
 +            this.scannedMaximumStride = maximumStride;
 +            this.scannedQualityDropoff = qualityDropoff;
 +            this.scannedAdaptiveQuality = adaptiveQuality;
@@ -550,7 +566,8 @@ index 0000000000000000000000000000000000000000..a3de4c8d6d7e77f1470b0342849e6be5
 +                    binding, originBlockX, originBlockZ, tileBlocks,
 +                    sampleGrid, plan.outputLevel, vegetationDensity);
 +            if (!coarseCells.isEmpty() && isCurrentWaveTask(binding, workKey, plan)) {
-+                WorldUpdater.insertCoarseUpdate(binding.world, plan.outputLevel, coarseCells);
++                WorldUpdater.insertCoarseUpdate(binding.world, plan.outputLevel,
++                        coarseCells, PREDICTION_MARKER);
 +            }
 +            return true;
 +        }
@@ -642,14 +659,14 @@ index 0000000000000000000000000000000000000000..a3de4c8d6d7e77f1470b0342849e6be5
 +        int originCellZ = Math.floorDiv(originBlockZ, cellSize);
 +        int expandedWidth = tileCells + 2;
 +        Sample[] expanded = new Sample[expandedWidth * expandedWidth];
-+        int seaLevel = binding.generator.getSeaLevel();
++        int waterSurfaceY = waterSurfaceY(binding.generator);
 +
 +        for (int z = -1; z <= tileCells; z++) {
 +            for (int x = -1; x <= tileCells; x++) {
 +                int blockX = (originCellX + x) * cellSize + cellSize / 2;
 +                int blockZ = (originCellZ + z) * cellSize + cellSize / 2;
 +                expanded[(z + 1) * expandedWidth + x + 1] = terrainSample(
-+                        sampleGrid, blockX, blockZ, seaLevel,
++                        sampleGrid, blockX, blockZ, waterSurfaceY,
 +                        VoxyConfig.CONFIG.seedLodSmoothing);
 +            }
 +        }
@@ -750,7 +767,7 @@ index 0000000000000000000000000000000000000000..a3de4c8d6d7e77f1470b0342849e6be5
 +                int blockX = (chunkX << 4) + localX;
 +                int blockZ = (chunkZ << 4) + localZ;
 +                expandedColumns[(localZ + 1) * 18 + localX + 1] = terrainSample(
-+                        sampleGrid, blockX, blockZ, binding.generator.getSeaLevel(),
++                        sampleGrid, blockX, blockZ, waterSurfaceY(binding.generator),
 +                        VoxyConfig.CONFIG.seedLodSmoothing);
 +            }
 +        }
@@ -780,7 +797,7 @@ index 0000000000000000000000000000000000000000..a3de4c8d6d7e77f1470b0342849e6be5
 +                            terrain.floorY, terrain.floorY, floorId);
 +
 +                    // Distant water only needs its visible surface. A single flat
-+                    // layer at the generator's datapack sea level avoids filling
++                    // layer at the top water-block coordinate avoids filling
 +                    // deep water columns and cannot climb smoothed mountains.
 +                    long waterId = predictionId(binding, mapper,
 +                            Blocks.WATER.defaultBlockState(), terrain.biome);
@@ -830,7 +847,7 @@ index 0000000000000000000000000000000000000000..a3de4c8d6d7e77f1470b0342849e6be5
 +    }
 +
 +    private static Sample sample(Binding binding, int blockX, int blockZ, int minY, int maxY) {
-+        int seaLevel = binding.generator.getSeaLevel();
++        int waterSurfaceY = waterSurfaceY(binding.generator);
 +        if (binding.fastHeightSampling && VoxyConfig.CONFIG.seedLodFastDatapackSampling) {
 +            // One solid-surface query replaces the previous world-surface query
 +            // plus an additional ocean-floor query in water. Water itself is a
@@ -841,8 +858,8 @@ index 0000000000000000000000000000000000000000..a3de4c8d6d7e77f1470b0342849e6be5
 +            Holder<Biome> biome = binding.generator.getBiomeSource().getNoiseBiome(
 +                    QuartPos.fromBlock(blockX), QuartPos.fromBlock(biomeY), QuartPos.fromBlock(blockZ),
 +                    binding.randomState.sampler());
-+            boolean ocean = floorY < seaLevel;
-+            int surfaceY = ocean ? seaLevel : floorY;
++            boolean ocean = floorY < waterSurfaceY;
++            int surfaceY = ocean ? waterSurfaceY : floorY;
 +            SurfaceKey key = new SurfaceKey(biomeId(biome), Math.floorDiv(floorY, 32), ocean);
 +            SurfaceMaterial material = binding.surfaceMaterials.computeIfAbsent(key,
 +                    ignored -> inferSurfaceMaterial(biome, floorY, ocean));
@@ -864,8 +881,8 @@ index 0000000000000000000000000000000000000000..a3de4c8d6d7e77f1470b0342849e6be5
 +        Holder<Biome> biome = binding.generator.getBiomeSource().getNoiseBiome(
 +                QuartPos.fromBlock(blockX), QuartPos.fromBlock(biomeY), QuartPos.fromBlock(blockZ),
 +                binding.randomState.sampler());
-+        boolean ocean = floorY < seaLevel;
-+        int surfaceY = ocean ? seaLevel : floorY;
++        boolean ocean = floorY < waterSurfaceY;
++        int surfaceY = ocean ? waterSurfaceY : floorY;
 +        if (floorY < minY) {
 +            return new Sample(surfaceY, floorY, biome,
 +                    fallbackSurfaceBlock(biome), fallbackOceanFloorBlock(biome));
@@ -879,6 +896,12 @@ index 0000000000000000000000000000000000000000..a3de4c8d6d7e77f1470b0342849e6be5
 +        BlockState surfaceBlock = !ocean && validSolid(column.getBlock(floorY))
 +                ? column.getBlock(floorY) : fallbackSurfaceBlock(biome);
 +        return new Sample(surfaceY, floorY, biome, surfaceBlock, floorBlock);
++    }
++
++    private static int waterSurfaceY(ChunkGenerator generator) {
++        // ChunkGenerator sea level is the boundary above the highest water
++        // block. Vanilla sea level 63 therefore has its top water block at 62.
++        return generator.getSeaLevel() - 1;
 +    }
 +
 +    private static boolean validSolid(BlockState state) {
@@ -938,7 +961,7 @@ index 0000000000000000000000000000000000000000..a3de4c8d6d7e77f1470b0342849e6be5
 +    }
 +
 +    private static Sample terrainSample(SampleGrid grid, int blockX, int blockZ,
-+                                        int seaLevel, boolean smooth) {
++                                        int waterSurfaceY, boolean smooth) {
 +        int stride = grid.stride;
 +        int shiftedX = blockX - stride / 2;
 +        int shiftedZ = blockZ - stride / 2;
@@ -972,7 +995,7 @@ index 0000000000000000000000000000000000000000..a3de4c8d6d7e77f1470b0342849e6be5
 +
 +        int floorY = bilinear(s00.floorY, s10.floorY, s01.floorY, s11.floorY,
 +                fractionX, fractionZ, stride);
-+        int surfaceY = floorY < seaLevel ? seaLevel : floorY;
++        int surfaceY = floorY < waterSurfaceY ? waterSurfaceY : floorY;
 +        return new Sample(surfaceY, floorY, nearest.biome, nearest.surfaceBlock, nearest.floorBlock);
 +    }
 +
@@ -1315,6 +1338,18 @@ index 0000000000000000000000000000000000000000..a3de4c8d6d7e77f1470b0342849e6be5
 +        return Math.max(4, Math.min(64, configured));
 +    }
 +
++    private static int sanitizeMinimumStride(int configured) {
++        if (configured <= 4) return 4;
++        if (configured <= 8) return 8;
++        return 16;
++    }
++
++    private static int sanitizeMaximumStride(int configured) {
++        if (configured <= 32) return 32;
++        if (configured <= 64) return 64;
++        return 128;
++    }
++
 +    private static int outputLevelForStride(int stride) {
 +        int sanitized = sanitizeStride(stride);
 +        // Preserve both highest-quality bands through the ordinary level-0
@@ -1326,13 +1361,14 @@ index 0000000000000000000000000000000000000000..a3de4c8d6d7e77f1470b0342849e6be5
 +    }
 +
 +    private static int strideForDistance(int distanceSquared, int qualityDropoff) {
-+        int maximum = sanitizeStride(VoxyConfig.CONFIG.seedLodSampleStride);
-+        if (!VoxyConfig.CONFIG.seedLodAdaptiveQuality || maximum == 4) {
++        int minimum = sanitizeMinimumStride(VoxyConfig.CONFIG.seedLodMinimumSampleStride);
++        int maximum = sanitizeMaximumStride(VoxyConfig.CONFIG.seedLodSampleStride);
++        if (!VoxyConfig.CONFIG.seedLodAdaptiveQuality) {
 +            return maximum;
 +        }
 +        int tier = Math.min(5, (int) (Math.sqrt(distanceSquared)
 +                / sanitizeQualityDropoff(qualityDropoff)));
-+        return Math.min(maximum, 4 << tier);
++        return Math.min(maximum, minimum << tier);
 +    }
 +
 +    private static int vegetationDensityThreshold(double distanceChunks,
@@ -1522,7 +1558,7 @@ index c4a82828a214a0006df1a4b6b7e5d0524a15c2d5..0b56baed1db02d464555d5c8aa115aa3
 \ No newline at end of file
 +}
 diff --git a/src/main/java/me/cortex/voxy/common/world/WorldUpdater.java b/src/main/java/me/cortex/voxy/common/world/WorldUpdater.java
-index 1ab705b92f2ba5c6dd15f5b0326d8cfd651433ca..b56a3b82426876cb5a546b193c17f790f9fa1e36 100644
+index 1ab705b92f2ba5c6dd15f5b0326d8cfd651433ca..8af8be31cb40e672d756a20b9c0c3007c8aec41c 100644
 --- a/src/main/java/me/cortex/voxy/common/world/WorldUpdater.java
 +++ b/src/main/java/me/cortex/voxy/common/world/WorldUpdater.java
 @@ -1,7 +1,12 @@
@@ -1549,7 +1585,7 @@ index 1ab705b92f2ba5c6dd15f5b0326d8cfd651433ca..b56a3b82426876cb5a546b193c17f790
          boolean shouldCheckEmptiness = false;
          WorldSection previousSection = null;
          for (int lvl = 0; lvl <= MAX_LOD_LAYER; lvl++) {
-@@ -89,6 +98,275 @@ public class WorldUpdater {
+@@ -89,6 +98,282 @@ public class WorldUpdater {
          }
      }
  
@@ -1562,7 +1598,8 @@ index 1ab705b92f2ba5c6dd15f5b0326d8cfd651433ca..b56a3b82426876cb5a546b193c17f790
 +     * the already-published coarse fallback.
 +     */
 +    public static void insertCoarseUpdate(WorldEngine into, int baseLevel,
-+                                          Iterable<CoarseCell> updates) {
++                                          Iterable<CoarseCell> updates,
++                                          long replaceableMarkerMask) {
 +        if (baseLevel <= 0 || baseLevel > MAX_LOD_LAYER) {
 +            throw new IllegalArgumentException("Invalid coarse base level " + baseLevel);
 +        }
@@ -1574,7 +1611,8 @@ index 1ab705b92f2ba5c6dd15f5b0326d8cfd651433ca..b56a3b82426876cb5a546b193c17f790
 +        }
 +        if (cells.isEmpty()) return;
 +
-+        WriteResult result = writeCells(into, baseLevel, cells, true);
++        WriteResult result = writeCells(into, baseLevel, cells, true,
++                replaceableMarkerMask);
 +        LongOpenHashSet sectionsToPropagate = result.changedSections;
 +        LongOpenHashSet changedCells = result.changedCells;
 +
@@ -1590,7 +1628,8 @@ index 1ab705b92f2ba5c6dd15f5b0326d8cfd651433ca..b56a3b82426876cb5a546b193c17f790
 +            }
 +
 +            Long2LongOpenHashMap parentUpdates = mipCells(into, level, parentCells);
-+            WriteResult parentResult = writeCells(into, level + 1, parentUpdates, false);
++            WriteResult parentResult = writeCells(into, level + 1, parentUpdates,
++                    false, replaceableMarkerMask);
 +            parentResult.changedSections.addAll(parentPresenceChanges);
 +            sectionsToPropagate = parentResult.changedSections;
 +            changedCells = parentResult.changedCells;
@@ -1599,7 +1638,8 @@ index 1ab705b92f2ba5c6dd15f5b0326d8cfd651433ca..b56a3b82426876cb5a546b193c17f790
 +
 +    private static WriteResult writeCells(WorldEngine into, int level,
 +                                          Long2LongOpenHashMap cells,
-+                                          boolean directCoarseContent) {
++                                          boolean directCoarseContent,
++                                          long replaceableMarkerMask) {
 +        Long2ObjectOpenHashMap<Int2LongOpenHashMap> patches = new Long2ObjectOpenHashMap<>();
 +        Long2ObjectOpenHashMap<LongOpenHashSet> globalCells = new Long2ObjectOpenHashMap<>();
 +        for (var entry : cells.long2LongEntrySet()) {
@@ -1631,21 +1671,24 @@ index 1ab705b92f2ba5c6dd15f5b0326d8cfd651433ca..b56a3b82426876cb5a546b193c17f790
 +            boolean containsNonAir = false;
 +            int neighborMask = 0;
 +            try {
-+                byte finerChildren = section.getNonEmptyChildren();
 +                for (var cellEntry : patchEntry.getValue().int2LongEntrySet()) {
 +                    int index = cellEntry.getIntKey();
 +                    int localX = index & 31;
 +                    int localZ = (index >> 5) & 31;
 +                    int localY = (index >> 10) & 31;
-+                    if (directCoarseContent) {
-+                        int child = WorldSection.getChildIndex(localX >> 4, localY >> 4, localZ >> 4);
-+                        if ((finerChildren & (1 << child)) != 0) {
-+                            continue;
-+                        }
-+                    }
 +                    long id = cellEntry.getLongValue();
++                    long oldId = section.data[index];
++                    // Parent cells are fallback geometry, not the finer child
++                    // itself. They must remain populated even when a child is
++                    // present or screen-space LOD selection exposes a rectangular
++                    // hole. Preserve authoritative unmarked cells while allowing
++                    // seed predictions to refresh older predicted fallbacks.
++                    if (directCoarseContent && !Mapper.isAir(oldId)
++                            && (oldId & replaceableMarkerMask) == 0) {
++                        continue;
++                    }
 +                    containsNonAir |= !Mapper.isAir(id);
-+                    if (section.data[index] != id) {
++                    if (oldId != id) {
 +                        section.data[index] = id;
 +                        changed = true;
 +                        if (localY == 0) neighborMask |= 1;
@@ -1826,7 +1869,7 @@ index 1ab705b92f2ba5c6dd15f5b0326d8cfd651433ca..b56a3b82426876cb5a546b193c17f790
      private static long insertSectionLvlIntoWorld(VoxelizedSection section, WorldSection worldSection) {
          final long[] vdat = section.section;
 diff --git a/src/main/resources/assets/voxy/lang/en_us.json b/src/main/resources/assets/voxy/lang/en_us.json
-index 08d1299be583fca45559a359469e8ba239d9a52e..67477e3af665bba095cba748768c776b7aaff9e4 100644
+index 08d1299be583fca45559a359469e8ba239d9a52e..503fb99893b54ed69dde38bee5dfba72caf4ccb7 100644
 --- a/src/main/resources/assets/voxy/lang/en_us.json
 +++ b/src/main/resources/assets/voxy/lang/en_us.json
 @@ -3,6 +3,7 @@
@@ -1837,7 +1880,7 @@ index 08d1299be583fca45559a359469e8ba239d9a52e..67477e3af665bba095cba748768c776b
  
    "voxy.config.general.enabled": "Enable Voxy",
    "voxy.config.general.enabled.tooltip": "Fully enables or disables voxy",
-@@ -16,6 +17,36 @@
+@@ -16,6 +17,39 @@
    "voxy.config.general.ingest": "Chunk Ingest",
    "voxy.config.general.ingest.tooltip": "Enables or disables voxies ability to convert new chunks into LoDs",
  
@@ -1848,10 +1891,13 @@ index 08d1299be583fca45559a359469e8ba239d9a52e..67477e3af665bba095cba748768c776b
 +  "voxy.config.general.seed_lod_distance.tooltip": "Prediction radius from 32 to 1024 chunks. Very large values can take a long time and use substantial Voxy cache space.",
 +
 +  "voxy.config.general.seed_lod_stride": "Seed LOD maximum sample stride",
-+  "voxy.config.general.seed_lod_stride.tooltip": "Farthest terrain sampling interval from 4 to 128 blocks. Adaptive quality adds progressively cheaper 4, 8, 16, 32, 64, and 128-block bands toward the horizon. Stride 128 is the useful cutoff for complete native N=16 sections before sampling gains diminish too far.",
++  "voxy.config.general.seed_lod_stride.tooltip": "Farthest terrain sampling interval from 32 to 128 blocks. Adaptive quality doubles the configured minimum at each band until reaching this value. With adaptive quality disabled, this is the fixed stride everywhere.",
 +
 +  "voxy.config.general.seed_lod_adaptive_quality": "Adaptive seed LOD quality",
-+  "voxy.config.general.seed_lod_adaptive_quality.tooltip": "Starts at stride 4 near the player and increases the sampling interval at each configured quality band.",
++  "voxy.config.general.seed_lod_adaptive_quality.tooltip": "Starts at the configured minimum stride near the player and doubles the sampling interval at each quality band until reaching the configured maximum.",
++
++  "voxy.config.general.seed_lod_minimum_stride": "Seed LOD minimum sample stride",
++  "voxy.config.general.seed_lod_minimum_stride.tooltip": "Starting adaptive sampling interval from 4 to 16 blocks. Stride 4 gives the best nearby predictions. Stride 16 starts N-sized generation immediately for maximum speed. Ignored when adaptive quality is disabled.",
 +
 +  "voxy.config.general.seed_lod_quality_dropoff": "Adaptive quality band width",
 +  "voxy.config.general.seed_lod_quality_dropoff.tooltip": "Chunks between each quality drop. At 4, the stride changes every 4 chunks. At 64, each quality level remains visible for 64 chunks.",
@@ -1874,7 +1920,7 @@ index 08d1299be583fca45559a359469e8ba239d9a52e..67477e3af665bba095cba748768c776b
    "voxy.config.general.rendering": "Voxy Rendering",
    "voxy.config.general.rendering.tooltip": "Enables or disables voxy rendering",
  
-@@ -38,4 +69,4 @@
+@@ -38,4 +72,4 @@
    "voxy.config.general.ssao_mode.basic": "Basic",
    "voxy.config.general.ssao_mode.better": "Better",
    "voxy.config.general.ssao_mode.best": "Best"

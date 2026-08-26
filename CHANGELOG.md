@@ -1,6 +1,17 @@
 # Changelog
 
-## seedlod.13: current patch
+## seedlod.14: current patch
+
+- Fixed the remaining persistent rectangular gaps at screen-space quality transitions.
+- Stopped leaving parent fallback cells empty merely because a finer child exists. Voxy can now select either parent or child geometry without exposing an unpopulated rectangle.
+- Kept authoritative unmarked parent cells protected while allowing marked seed predictions to refresh older predicted fallback cells.
+- Corrected the predicted water surface by one block. The generator's sea-level value is the boundary above the water, so vanilla sea level 63 now places the highest predicted water block at Y=62.
+- Added a minimum adaptive sample-stride slider with choices 4, 8, and 16.
+- Restricted maximum sample stride to 32, 64, and 128. The non-overlapping ranges make an invalid minimum and maximum ordering impossible.
+- Adaptive quality now begins at the configured minimum and doubles at each quality band until reaching the maximum.
+- Kept maximum stride as the fixed stride when adaptive quality is disabled, preserving the previous non-adaptive behavior.
+
+## seedlod.13
 
 - Fixed the rectangular gaps between N-sized quality bands.
 - Replaced partial 64-block coarse patches with complete horizontally aligned native Voxy sections.

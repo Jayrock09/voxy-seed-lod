@@ -41,7 +41,7 @@ This project is unofficial, unsupported by MCRcortex, and not affiliated with Mo
 
 ### Distance-based quality
 
-- With adaptive quality enabled, nearby tiles use stride 4 and outward bands progressively use stride 8, 16, 32, 64, and up to 128.
+- With adaptive quality enabled, nearby work begins at the configured minimum stride of 4, 8, or 16. Outward bands double that interval until reaching the configured maximum of 32, 64, or 128.
 - A configurable band width from 4 to 64 chunks controls when each quality drop happens. A width of 4 doubles the stride every 4 chunks, while 64 preserves each tier for 64 chunks.
 - Sampling is aligned to a global world-space lattice, so strides larger than the 64-block loading tile remain continuous across tile borders.
 - The selected quality and output size are decided before a work unit is generated.
@@ -59,16 +59,16 @@ This project is unofficial, unsupported by MCRcortex, and not affiliated with Mo
 - Every N-sized job fills a complete horizontal native Voxy section before publishing it. A finer child therefore never hides an unfinished portion of its coarser parent.
 - Coarse leaves have their own persistent presence state instead of falsely claiming finer children exist.
 - Before refinement becomes visible, a complete finer child is initialized by expanding its coarse parent. Fine predictions or authoritative real chunks then overlay that background.
-- Direct writes skip regions already owned by finer children, so coarse work cannot replace real or higher-quality data.
+- Parent fallback cells remain populated even where finer children exist, preventing screen-space LOD selection from exposing rectangular holes. Finer child sections remain untouched, and authoritative unmarked parent cells are preserved.
 
 ### Terrain quality
 
-- Optional adaptive sampling starts at stride 4 and progressively increases through power-of-two bands toward the configured horizon maximum.
+- Optional adaptive sampling starts at the configured minimum and progressively increases through power-of-two bands toward the configured horizon maximum.
 - Optional terrain smoothing reconstructs continuous surfaces between sparse samples. The two nearest quality bands use one-block columns, while direct N-sized bands emit larger cells.
 - Large height changes use continuous slope-aware interpolation, keeping cliffs steep without creating stride-sized towers.
 - Most predicted terrain is only a four-block surface shell. A one-block reconstruction halo identifies exposed drops and extends only those visible cliff edges to the lower adjacent surface.
 - Predicted outdoor air carries full skylight, preventing black terrain in daylight.
-- Ocean floors remain represented, but water is a single flat visible layer at the active generator's datapack sea level. It is no longer smoothed as terrain or filled down to the seafloor, preventing water from climbing mountains.
+- Ocean floors remain represented, but water is a single flat visible layer at one block below the active generator's datapack sea-level boundary. Vanilla sea level 63 therefore places the top predicted water block at Y=62. Water is not smoothed as terrain or filled down to the seafloor, preventing it from climbing mountains.
 
 ### Lightweight vegetation proxies
 
@@ -95,9 +95,10 @@ This is useful for datapacks such as Tectonic, Terralith, and other vanilla-styl
 | Setting | Recommendation | Notes |
 |---|---:|---|
 | Seed LOD distance | `192` | Radius in chunks |
+| Minimum adaptive stride | `4` | Best nearby predictions; use 8 or 16 only for faster initial coverage |
 | Maximum sample stride | `64` quality, `128` speed | Stride 128 cuts far-section seed queries but retains less terrain detail |
 | Seed LOD threads | `4` | Changes take effect immediately |
-| Adaptive quality | On | Stride 4 nearby, then 8, 16, 32, 64, and optionally 128 toward the horizon |
+| Adaptive quality | On | Starts at minimum and doubles each band until reaching maximum |
 | Adaptive quality band width | `32` | Each stride tier lasts 32 chunks |
 | Direct N-sized generation | On | Skips unnecessary fine reconstruction in stride 16 through 128 bands |
 | Smooth sampled terrain | On | Large quality gain for little additional sampling cost |
@@ -126,9 +127,9 @@ N-sized generation removes most of the remaining far-field reconstruction. Each 
 The largest savings happen at the horizon, which also contains most of the tiles. Terrain becomes visible near the player immediately and expands as workers finish each gated ring.
 
 - Smoothing adds interpolation work but no additional generator queries.
-- Direct coarse leaves are persisted separately from their finer-child mask. Seedlod.13 also publishes only complete aligned N-sized sections, closing the partial-child ownership gap visible in seedlod.12.
+- Direct coarse leaves are persisted separately from their finer-child mask. Seedlod.13 publishes complete aligned N-sized sections, and seedlod.14 keeps their parent fallback geometry populated even when finer children exist.
 - Ordinary movement keeps nearby queued work alive. Long teleports discard stale work and reprioritize the destination.
-- Changing the maximum stride or adaptive-quality toggle while a world is open immediately cancels stale plans and rescans the wave at the new quality.
+- Changing either stride limit or the adaptive-quality toggle while a world is open immediately cancels stale plans and rescans the wave at the new quality.
 - Vegetation is hash-thinned before the more expensive local-minimum test. Density falls continuously with distance but never ends at a quality-band border.
 - Predicted mapping IDs are cached per block state and biome, avoiding repeated mapper lock traffic across thousands of matching columns.
 - Oceans use one visible sea-level water block per column instead of complete water volumes. This greatly reduces voxel writes and allocated vertical sections over deep water.
@@ -189,7 +190,7 @@ The patch is available at [`patches/voxy-seed-lod-mc26.2.patch`](patches/voxy-se
 
 ## Cache migration
 
-Seedlod.13 changes N-sized coverage from partial patches to complete aligned sections. A clean cache is required when upgrading from seedlod.12 or any earlier seedlod version so stored partial children cannot keep hiding their coarse fallback. Close Minecraft, back up the world, and remove only that world's `<world save>/voxy` derived-cache folder before launching seedlod.13.
+Seedlod.14 repairs parent fallback coverage and corrects stored predicted water height. A clean cache is required when upgrading from seedlod.13 or any earlier seedlod version so missing parent cells and one-block-high water are regenerated. Close Minecraft, back up the world, and remove only that world's `<world save>/voxy` derived-cache folder before launching seedlod.14.
 
 This cleanup is also required for caches touched by seedlod.6 and seedlod.7 direct-parent experiments or the original unmarked seedlod.1 experiment.
 
@@ -197,7 +198,7 @@ Do not delete the complete world folder.
 
 ## Verification
 
-The published patch version compiled successfully and passed Voxy's Gradle build, test task, resource processing, and access-widener validation before publication. Seedlod.13's aligned N-sized scheduling still needs broad in-game runtime testing across movement, restarts, seeds, and datapacks.
+The published patch version compiled successfully and passed Voxy's Gradle build, test task, resource processing, and access-widener validation before publication. Seedlod.14's parent-fallback repair still needs broad in-game runtime testing across movement, restarts, seeds, and datapacks.
 
 ## Contributing
 
