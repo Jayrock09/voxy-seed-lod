@@ -1,6 +1,15 @@
 # Changelog
 
-## seedlod.8: current patch
+## seedlod.9: current patch
+
+- Removed stride 2 and made stride 4 the minimum terrain sampling quality.
+- Expanded the maximum sample stride from 8 to 128 with adaptive 4, 8, 16, 32, 64, and 128-block distance bands.
+- Aligned sampling to a global world-space lattice so stride 64 and 128 remain continuous across 64-block loading-tile borders.
+- Reduced far-tile generator queries from 100 at stride 8 to 9 at stride 128.
+- Stopped proxy vegetation after stride 16 so ultra-coarse horizon tiles avoid unnecessary tree geometry.
+- Made maximum-stride and adaptive-quality changes restart pending wave plans while the world remains open.
+
+## seedlod.8
 
 - Removed the seedlod.6 and seedlod.7 direct top-level sparse tiles and deferred parent replacement path.
 - Added a player-centered loading wave made from 4 by 4-chunk tiles.

@@ -23,7 +23,7 @@ This project is unofficial, unsupported by MCRcortex, and not affiliated with Mo
 - Worker-thread changes take effect while the world is open.
 - Begins at the tile containing the player. Existing real chunks fill the center while predictions continue directly outward.
 - Marks every prediction so later predictions may replace it while real ingested chunk data remains authoritative.
-- Supports prediction distances from 32 to 512 chunks and sample strides of 2, 4, or 8 blocks.
+- Supports prediction distances from 32 to 512 chunks and sample strides of 4, 8, 16, 32, 64, or 128 blocks.
 
 ### Player-centered connected loading wave
 
@@ -37,14 +37,15 @@ This project is unofficial, unsupported by MCRcortex, and not affiliated with Mo
 
 ### Distance-based quality
 
-- With adaptive quality enabled, nearby tiles use stride 2, medium-distance tiles use stride 4, and the outer horizon uses the configured maximum of up to stride 8.
+- With adaptive quality enabled, nearby tiles use stride 4 and outward bands progressively use stride 8, 16, 32, 64, and up to 128.
+- Sampling is aligned to a global world-space lattice, so strides larger than the 64-block loading tile remain continuous across tile borders.
 - The selected quality is decided before a tile is generated, so there is no destructive coarse-parent replacement phase.
 - Moving closer can regenerate an existing predicted tile at a finer stride. Moving away does not waste time downgrading completed data.
 - Voxy still chooses its rendered screen-space LOD normally after the predicted chunks enter the cache.
 
 ### Terrain quality
 
-- Optional adaptive sampling: stride 2 near the normal render boundary, stride 4 at medium range, and the configured maximum stride farther away.
+- Optional adaptive sampling starts at stride 4 and progressively increases through power-of-two bands toward the configured horizon maximum.
 - Optional terrain smoothing reconstructs one-block columns between sparse samples.
 - Large height changes use continuous slope-aware interpolation, keeping cliffs steep without creating stride-sized towers.
 - Neighbor-aware terrain skirts close steep undersides and chunk-border holes.
@@ -58,6 +59,7 @@ This project is unofficial, unsupported by MCRcortex, and not affiliated with Mo
 - Tiered conifers and bent/branched flat-canopy trees.
 - World-space local-minimum placement replaces fixed chunk quadrants, removing obvious rows and stripes.
 - Placement is stable for a given seed but intentionally does not claim to reproduce Minecraft's exact decoration stage.
+- Tree proxies stop after stride 16. Stride 32 through 128 omit vegetation to keep the barely visible horizon cheap.
 
 ### Datapack awareness
 
@@ -75,9 +77,9 @@ This is useful for datapacks such as Tectonic, Terralith, and other vanilla-styl
 | Setting | Recommendation | Notes |
 |---|---:|---|
 | Seed LOD distance | `192` | Radius in chunks |
-| Maximum sample stride | `8` | Fastest; smoothing makes it substantially less blocky |
+| Maximum sample stride | `128` | Fastest horizon; global alignment and smoothing prevent tile seams |
 | Seed LOD threads | `4` | Changes take effect immediately |
-| Adaptive quality | On | Stride 2 nearby, stride 4 at medium range, stride 8 at the horizon |
+| Adaptive quality | On | Stride 4 nearby, then 8, 16, 32, 64, and 128 toward the horizon |
 | Smooth sampled terrain | On | Large quality gain for little additional sampling cost |
 | Predicted vegetation | On | Cheap visual proxies |
 | Fast datapack terrain sampling | On | Recommended for noise-settings datapacks |
@@ -86,17 +88,23 @@ The normal Voxy render distance must also be large enough to display the predict
 
 ## Performance model
 
-The wave loader shares generator samples across each 64 by 64-block tile. Including the one-sample boundary halo, a tile needs:
+The wave loader shares globally aligned generator samples across each 64 by 64-block tile. Including the interpolation and terrain-skirt halo, a tile needs:
 
-- 1,156 generator samples at stride 2 instead of 1,600 with independent per-chunk grids, about 1.38 times less sampling.
-- 324 samples at stride 4 instead of 576, about 1.78 times less sampling.
-- 100 samples at stride 8 instead of 256, about 2.56 times less sampling.
+- 324 generator samples at stride 4.
+- 100 samples at stride 8.
+- 36 samples at stride 16.
+- 16 samples at stride 32.
+- 9 samples at stride 64 or 128.
+
+At stride 128, the far tile performs about 11 times fewer generator queries than a stride-8 tile. A simple area-weighted model for the default six adaptive bands estimates roughly 6 times fewer generator queries than the seedlod.8 adaptive profile. This is a sampling estimate, not an end-to-end benchmark.
 
 The largest savings happen at the horizon, which also contains most of the tiles. Terrain becomes visible near the player immediately and expands as workers finish each gated ring.
 
 - Smoothing adds interpolation and voxel writes, not additional seed samples.
 - Every tile follows Voxy's normal hierarchy-building path, eliminating the unsupported top-level parent replacement that caused slabs and rectangular holes in seedlod.6 and seedlod.7.
 - Ordinary movement keeps nearby queued work alive. Long teleports discard stale work and reprioritize the destination.
+- Changing the maximum stride or adaptive-quality toggle while a world is open immediately cancels stale plans and rescans the wave at the new quality.
+- Ultra-coarse stride 32 through 128 skips proxy vegetation, reducing hashing and geometry work at the horizon.
 - Redesigned trees perform more tiny hash checks but produce roughly the same amount of leaf geometry as the earlier proxy implementation.
 - A 1,024-chunk placement simulation averaged 3.95 vegetation candidates per chunk with no preferred local X/Z lane.
 - Fast datapack sampling is expected to improve expensive noise-datapack sampling by roughly 1.5–4× compared with this patch's former full-column approach. This is an engineering estimate, not a universal benchmark.
@@ -145,7 +153,7 @@ The patch is available at [`patches/voxy-seed-lod-mc26.2.patch`](patches/voxy-se
 
 ## Cache migration
 
-Seedlod.6 and seedlod.7 wrote experimental data directly into Voxy's top LOD. Seedlod.8 deliberately removes that path, but an existing cache may still contain those old slabs. For a clean seedlod.8 test, close Minecraft, back up the world, and remove only that world's `<world save>/voxy` derived-cache folder before launching the new build.
+Seedlod.6 and seedlod.7 wrote experimental data directly into Voxy's top LOD. Seedlod.8 and later deliberately remove that path, but an existing cache may still contain those old slabs. For a clean current-version test, close Minecraft, back up the world, and remove only that world's `<world save>/voxy` derived-cache folder before launching the new build.
 
 This cleanup is also required if the original unmarked seedlod.1 experiment ever generated the cache. Predictions from the ordinary chunk path in seedlod.2 through seedlod.5 carry a marker and can be replaced automatically.
 
