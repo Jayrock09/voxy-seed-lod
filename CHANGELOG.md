@@ -1,6 +1,16 @@
 # Changelog
 
-## seedlod.7: current patch
+## seedlod.8: current patch
+
+- Removed the seedlod.6 and seedlod.7 direct top-level sparse tiles and deferred parent replacement path.
+- Added a player-centered loading wave made from 4 by 4-chunk tiles.
+- Made the first tile contain the player and gated each complete square ring before the next ring can start, preventing holes behind the loading frontier.
+- Shared one generator sample grid across every tile, reducing repeated halo sampling by about 1.38 times at stride 2, 1.78 times at stride 4, and 2.56 times at stride 8.
+- Kept automatic stride-2 nearby, stride-4 medium, and stride-8 horizon quality without a destructive refinement pass.
+- Kept normal movement work alive while making long teleports cancel and reprioritize stale tasks.
+- Returned all prediction insertion to Voxy's ordinary bottom-up `WorldUpdater` hierarchy path.
+
+## seedlod.7
 
 - Extended the initial sparse pass through the starting area, removing the intentional inner gap.
 - Replaced scattered detailed chunk updates with aligned 16 by 16-chunk reconstruction regions.

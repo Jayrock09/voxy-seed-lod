@@ -1,5 +1,5 @@
 diff --git a/gradle.properties b/gradle.properties
-index a25ea295..126c9b20 100644
+index a25ea295a8fac1778a82242a7570d28587a17905..ffb784e83e6d07ca9c0b11bf2f9e042648861d1f 100644
 --- a/gradle.properties
 +++ b/gradle.properties
 @@ -29,6 +29,6 @@ nvidium_version=0.4.3-beta13-26.1
@@ -7,13 +7,13 @@ index a25ea295..126c9b20 100644
  
  # Mod Properties
 -mod_version = 0.2.19-beta
-+mod_version = 0.2.19-beta-seedlod.7
++mod_version = 0.2.19-beta-seedlod.8
  maven_group = me.cortex
 -archives_base_name = voxy
 \ No newline at end of file
 +archives_base_name = voxy
 diff --git a/src/main/java/me/cortex/voxy/client/VoxyClient.java b/src/main/java/me/cortex/voxy/client/VoxyClient.java
-index c0029a7d..a91e7625 100644
+index c0029a7d17463ad269b0ce8e0967a6ef9a2a904e..a91e762571c814a8fba04fcf554722dc3f697571 100644
 --- a/src/main/java/me/cortex/voxy/client/VoxyClient.java
 +++ b/src/main/java/me/cortex/voxy/client/VoxyClient.java
 @@ -6,6 +6,7 @@ import me.cortex.voxy.common.Logger;
@@ -46,7 +46,7 @@ index c0029a7d..a91e7625 100644
 \ No newline at end of file
 +}
 diff --git a/src/main/java/me/cortex/voxy/client/VoxyClientInstance.java b/src/main/java/me/cortex/voxy/client/VoxyClientInstance.java
-index 2dab3784..fb0f1e73 100644
+index 2dab3784c8f93626f34d38f9cbdfc67b41de7e5a..fb0f1e73ea12f4e28c11e2a359432edd27f2b57b 100644
 --- a/src/main/java/me/cortex/voxy/client/VoxyClientInstance.java
 +++ b/src/main/java/me/cortex/voxy/client/VoxyClientInstance.java
 @@ -4,6 +4,7 @@ import me.cortex.voxy.client.compat.FlashbackCompat;
@@ -89,17 +89,15 @@ index 2dab3784..fb0f1e73 100644
          //Free the render resources cache since the entire instance is freed
          RenderResourceReuse.clearResources();
 diff --git a/src/main/java/me/cortex/voxy/client/config/VoxyConfig.java b/src/main/java/me/cortex/voxy/client/config/VoxyConfig.java
-index b2f5eefb..0afd9200 100644
+index b2f5eefb81627cb07dd13f6eebe1a00eef517577..7f11c7f614733d12575c19359515ed1550c829ac 100644
 --- a/src/main/java/me/cortex/voxy/client/config/VoxyConfig.java
 +++ b/src/main/java/me/cortex/voxy/client/config/VoxyConfig.java
-@@ -35,6 +35,16 @@ public class VoxyConfig {
+@@ -35,6 +35,14 @@ public class VoxyConfig {
      public float subDivisionSize = 64;
      public String fogMode;
      public boolean dontUseSodiumBuilderThreads = false;
 +    public boolean seedLodEnabled = false;
 +    public int seedLodRenderDistance = 192;
-+    public boolean seedLodSparseLoading = true;
-+    public int seedLodSparseDetailDistance = 64;
 +    public int seedLodSampleStride = 4;
 +    public boolean seedLodAdaptiveQuality = true;
 +    public boolean seedLodSmoothing = true;
@@ -110,10 +108,10 @@ index b2f5eefb..0afd9200 100644
  
      public SSAO.SSAOMode getSSAOMode() {
 diff --git a/src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java b/src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java
-index d456e55c..3ab4d701 100644
+index d456e55c120a93d2a8c223b86c8eedff073cbd8b..3ab405189a226fa9d1e1c03875e6675157705a33 100644
 --- a/src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java
 +++ b/src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java
-@@ -77,6 +77,62 @@ public class VoxyConfigMenu implements ConfigEntryPoint {
+@@ -77,6 +77,51 @@ public class VoxyConfigMenu implements ConfigEntryPoint {
                                          "voxy:ingest_enabled",
                                          Component.translatable("voxy.config.general.ingest"),
                                          ()->CFG.ingestEnabled, v->CFG.ingestEnabled=v)
@@ -127,17 +125,6 @@ index d456e55c..3ab4d701 100644
 +                                        Component.translatable("voxy.config.general.seed_lod_distance"),
 +                                        ()->CFG.seedLodRenderDistance, v->CFG.seedLodRenderDistance=v,
 +                                        new Range(32, 512, 16))
-+                                        .setImpact(OptionImpact.HIGH),
-+                                new BoolOption(
-+                                        "voxy:seed_lod_sparse_loading",
-+                                        Component.translatable("voxy.config.general.seed_lod_sparse_loading"),
-+                                        ()->CFG.seedLodSparseLoading, v->CFG.seedLodSparseLoading=v)
-+                                        .setImpact(OptionImpact.HIGH),
-+                                new IntOption(
-+                                        "voxy:seed_lod_sparse_detail_distance",
-+                                        Component.translatable("voxy.config.general.seed_lod_sparse_detail_distance"),
-+                                        ()->CFG.seedLodSparseDetailDistance, v->CFG.seedLodSparseDetailDistance=v,
-+                                        new Range(32, 192, 16))
 +                                        .setImpact(OptionImpact.HIGH),
 +                                new IntOption(
 +                                        "voxy:seed_lod_stride",
@@ -178,10 +165,10 @@ index d456e55c..3ab4d701 100644
                  new Page(Component.translatable("voxy.config.rendering"),
 diff --git a/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java
 new file mode 100644
-index 00000000..2b7ded7f
+index 0000000000000000000000000000000000000000..0d7795c71c5460b883e5eb779921070a0f8575ad
 --- /dev/null
 +++ b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java
-@@ -0,0 +1,1352 @@
+@@ -0,0 +1,983 @@
 +package me.cortex.voxy.client.seedlod;
 +
 +import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
@@ -212,11 +199,8 @@ index 00000000..2b7ded7f
 +
 +import java.util.Arrays;
 +import java.util.ArrayList;
-+import java.util.HashMap;
-+import java.util.HashSet;
 +import java.util.List;
 +import java.util.Locale;
-+import java.util.Map;
 +import java.util.Set;
 +import java.util.concurrent.ConcurrentHashMap;
 +import java.util.concurrent.PriorityBlockingQueue;
@@ -234,19 +218,12 @@ index 00000000..2b7ded7f
 + * chunk ingest replaces (and is never replaced by) these predictions.
 + */
 +public final class SeedLodManager {
-+    private static final int MAX_PENDING_TASKS = 512;
-+    private static final int MAX_ENQUEUE_PER_TICK = 64;
-+    private static final int MAX_COARSE_ENQUEUE_PER_TICK = 256;
-+    private static final int MAX_SCAN_PER_TICK = 8192;
-+    private static final int RECENTER_DISTANCE = 8;
-+    private static final int COARSE_PRIORITY = 0;
-+    private static final int DETAIL_PRIORITY = 1;
-+    private static final int COARSE_LOD_LEVEL = WorldEngine.MAX_LOD_LAYER;
-+    private static final int COARSE_TILE_CHUNKS = 32;
-+    private static final int COARSE_SAMPLE_BLOCKS = 32;
-+    private static final int COARSE_VOXEL_BLOCKS = 1 << COARSE_LOD_LEVEL;
-+    private static final int COARSE_GRID_SAMPLES = 512 / COARSE_SAMPLE_BLOCKS + 1;
-+    private static final int DETAIL_TILE_CHUNKS = 16;
++    private static final int MAX_PENDING_TASKS = 256;
++    private static final int MAX_ENQUEUE_PER_TICK = 96;
++    private static final int RECENTER_DISTANCE = 4;
++    private static final int TELEPORT_CANCEL_DISTANCE = 32;
++    private static final int WAVE_TILE_CHUNKS = 4;
++    private static final int WAVE_PRIORITY = 0;
 +    // Voxy currently leaves the low 27 bits unused. Marking predictions lets a
 +    // later seed pass replace them without ever replacing authoritative chunks.
 +    private static final long PREDICTION_MARKER = 1L;
@@ -254,24 +231,22 @@ index 00000000..2b7ded7f
 +    private final ThreadPoolExecutor executor;
 +    private final AtomicInteger pendingTasks = new AtomicInteger();
 +    private final AtomicLong taskSequence = new AtomicLong();
-+    // Smallest planned stride per chunk. Moving toward an existing prediction
++    // Smallest planned stride per wave tile. Moving toward an existing prediction
 +    // upgrades it, while moving away never wastes work downgrading it.
-+    private final ConcurrentHashMap<Long, Integer> plannedStrides = new ConcurrentHashMap<>();
-+    private final Set<Long> plannedCoarseTiles = ConcurrentHashMap.newKeySet();
-+    private final ConcurrentHashMap<Long, Integer> plannedDetailTiles = new ConcurrentHashMap<>();
++    private final ConcurrentHashMap<Long, TilePlan> plannedTiles = new ConcurrentHashMap<>();
++    private final ConcurrentHashMap<Long, Integer> completedTiles = new ConcurrentHashMap<>();
 +
 +    private volatile Binding binding;
 +    private volatile int playerChunkX;
 +    private volatile int playerChunkZ;
-+    private volatile int innerRadius;
++    private volatile long scanGeneration;
 +
 +    private int scanCenterX;
 +    private int scanCenterZ;
-+    private long spiralIndex;
++    private int waveRing;
 +    private boolean scanInitialized;
-+    private boolean detailScanFinished;
-+    private int scannedInnerRadius = -1;
-+    private int scannedDetailRadius = -1;
++    private boolean waveScanFinished;
++    private int scannedTargetRadius = -1;
 +    private boolean stopped;
 +
 +    public SeedLodManager() {
@@ -316,13 +291,12 @@ index 00000000..2b7ded7f
 +            current = new Binding(serverLevel, world, chunkSource.getGenerator(), chunkSource.randomState(),
 +                    serverLevel.getSeed());
 +            this.binding = current;
-+            this.plannedStrides.clear();
-+            this.plannedCoarseTiles.clear();
-+            this.plannedDetailTiles.clear();
++            this.plannedTiles.clear();
++            this.completedTiles.clear();
 +            this.scanInitialized = false;
-+            this.detailScanFinished = false;
-+            this.scannedInnerRadius = -1;
-+            this.scannedDetailRadius = -1;
++            this.waveScanFinished = false;
++            this.scannedTargetRadius = -1;
++            this.scanGeneration++;
 +        }
 +
 +        this.updateWorkerCount();
@@ -330,128 +304,126 @@ index 00000000..2b7ded7f
 +        var playerChunk = client.player.chunkPosition();
 +        this.playerChunkX = playerChunk.x();
 +        this.playerChunkZ = playerChunk.z();
-+        // Slightly overlap Minecraft's render distance. Existing-data detection
-+        // keeps this safe and avoids exposing an empty ring during chunk fades.
-+        this.innerRadius = Math.max(4, client.options.getEffectiveRenderDistance() - 2);
 +
-+        if (!this.scanInitialized
-+                || Math.abs(this.playerChunkX - this.scanCenterX) >= RECENTER_DISTANCE
-+                || Math.abs(this.playerChunkZ - this.scanCenterZ) >= RECENTER_DISTANCE) {
++        int centerShift = Math.max(Math.abs(this.playerChunkX - this.scanCenterX),
++                Math.abs(this.playerChunkZ - this.scanCenterZ));
++        if (!this.scanInitialized || centerShift >= RECENTER_DISTANCE) {
++            if (this.scanInitialized && centerShift >= TELEPORT_CANCEL_DISTANCE) {
++                // A teleport makes the old queue actively harmful. Ordinary
++                // movement keeps nearby work alive so the wave cannot starve.
++                this.scanGeneration++;
++            }
 +            this.scanCenterX = this.playerChunkX;
 +            this.scanCenterZ = this.playerChunkZ;
-+            this.spiralIndex = 0;
++            this.waveRing = 0;
 +            this.scanInitialized = true;
-+            this.detailScanFinished = false;
++            this.waveScanFinished = false;
 +        }
 +
 +        int targetRadius = Math.max(32, VoxyConfig.CONFIG.seedLodRenderDistance);
-+        if (targetRadius <= this.innerRadius) {
++        if (this.scannedTargetRadius != targetRadius) {
++            this.waveRing = 0;
++            this.waveScanFinished = false;
++            this.scannedTargetRadius = targetRadius;
++            this.scanGeneration++;
++        }
++        if (this.waveScanFinished) {
 +            return;
 +        }
-+        int detailRadius = VoxyConfig.CONFIG.seedLodSparseLoading
-+                ? Math.min(targetRadius, Math.max(this.innerRadius,
-+                        VoxyConfig.CONFIG.seedLodSparseDetailDistance))
-+                : targetRadius;
-+        if (VoxyConfig.CONFIG.seedLodSparseLoading) {
-+            if (this.scheduleCoarseTiles(current, targetRadius)) {
-+                this.scheduleDetailTiles(current, detailRadius);
-+            }
-+            return;
-+        }
-+        if (this.scannedInnerRadius != this.innerRadius || this.scannedDetailRadius != detailRadius) {
-+            this.spiralIndex = 0;
-+            this.detailScanFinished = false;
-+            this.scannedInnerRadius = this.innerRadius;
-+            this.scannedDetailRadius = detailRadius;
-+        }
-+        if (detailRadius <= this.innerRadius || this.detailScanFinished) {
-+            return;
-+        }
++
++        int centerTileX = Math.floorDiv(this.scanCenterX, WAVE_TILE_CHUNKS);
++        int centerTileZ = Math.floorDiv(this.scanCenterZ, WAVE_TILE_CHUNKS);
++        int tileRadius = Math.floorDiv(targetRadius + WAVE_TILE_CHUNKS - 1, WAVE_TILE_CHUNKS) + 1;
++        long targetSquared = (long) targetRadius * targetRadius;
 +        int enqueued = 0;
-+        int scanned = 0;
-+        while (this.pendingTasks.get() < MAX_PENDING_TASKS
-+                && enqueued < MAX_ENQUEUE_PER_TICK
-+                && scanned++ < MAX_SCAN_PER_TICK) {
-+            Offset offset = squareSpiral(this.spiralIndex++);
-+            int radius = Math.max(Math.abs(offset.x), Math.abs(offset.z));
-+            if (radius > detailRadius) {
-+                this.detailScanFinished = true;
-+                break;
++        while (this.waveRing <= tileRadius) {
++            long firstIndex = this.waveRing == 0 ? 0L
++                    : (long) (this.waveRing * 2 - 1) * (this.waveRing * 2 - 1);
++            long endIndex = (long) (this.waveRing * 2 + 1) * (this.waveRing * 2 + 1);
++            boolean ringComplete = true;
++
++            for (long index = firstIndex; index < endIndex; index++) {
++                Offset offset = squareSpiral(index);
++                int tileX = centerTileX + offset.x;
++                int tileZ = centerTileZ + offset.z;
++                long distanceSquared = minimumDistanceSquaredToRegion(
++                        this.scanCenterX, this.scanCenterZ, tileX, tileZ, WAVE_TILE_CHUNKS);
++                if (distanceSquared > targetSquared) {
++                    continue;
++                }
++
++                long key = net.minecraft.world.level.ChunkPos.pack(tileX, tileZ);
++                int stride = strideForDistance(
++                        (int) Math.min(Integer.MAX_VALUE, distanceSquared), 0, targetRadius);
++                Integer completedStride = this.completedTiles.get(key);
++                if (completedStride != null && completedStride <= stride) {
++                    continue;
++                }
++
++                ringComplete = false;
++                TilePlan previousPlan = this.plannedTiles.get(key);
++                if (previousPlan != null && previousPlan.stride <= stride) {
++                    continue;
++                }
++                if (this.pendingTasks.get() >= MAX_PENDING_TASKS
++                        || enqueued >= MAX_ENQUEUE_PER_TICK) {
++                    return;
++                }
++
++                TilePlan plan = new TilePlan(stride, this.scanGeneration);
++                this.plannedTiles.put(key, plan);
++                this.submitWaveTile(current, key, plan, tileX, tileZ, Math.sqrt(distanceSquared));
++                enqueued++;
 +            }
 +
-+            int distanceSquared = offset.x * offset.x + offset.z * offset.z;
-+            if (distanceSquared < this.innerRadius * this.innerRadius
-+                    || distanceSquared > detailRadius * detailRadius) {
-+                continue;
++            if (!ringComplete) {
++                return;
 +            }
-+
-+            int chunkX = this.scanCenterX + offset.x;
-+            int chunkZ = this.scanCenterZ + offset.z;
-+            long key = net.minecraft.world.level.ChunkPos.pack(chunkX, chunkZ);
-+            int stride = strideForDistance(distanceSquared, this.innerRadius, detailRadius);
-+            Integer previousStride = this.plannedStrides.get(key);
-+            if (previousStride != null && previousStride <= stride) {
-+                continue;
-+            }
-+            this.plannedStrides.put(key, stride);
-+
-+            this.submit(current, key, chunkX, chunkZ, stride, previousStride,
-+                    Math.sqrt(distanceSquared));
-+            enqueued++;
++            this.waveRing++;
 +        }
++        this.waveScanFinished = true;
 +    }
 +
-+    private void submit(Binding taskBinding, long key, int chunkX, int chunkZ, int stride,
-+                        Integer previousStride, double distanceChunks) {
++    private void submitWaveTile(Binding taskBinding, long key, TilePlan plan,
++                                int tileX, int tileZ, double distanceChunks) {
 +        this.pendingTasks.incrementAndGet();
 +        try {
-+            this.executor.execute(new PrioritizedTask(DETAIL_PRIORITY, distanceChunks,
++            this.executor.execute(new PrioritizedTask(WAVE_PRIORITY, distanceChunks,
 +                    this.taskSequence.getAndIncrement(), () -> {
-+                boolean keepSeen = true;
++                boolean keepPlanned = true;
 +                boolean acquired = false;
 +                try {
-+                    if (this.binding != taskBinding || !VoxyConfig.CONFIG.seedLodEnabled || !taskBinding.world.isLive()) {
++                    if (this.binding != taskBinding || this.scanGeneration != plan.generation
++                            || !VoxyConfig.CONFIG.seedLodEnabled || !taskBinding.world.isLive()) {
++                        keepPlanned = false;
 +                        return;
 +                    }
-+                    if (!Integer.valueOf(stride).equals(this.plannedStrides.get(key))) {
++                    if (this.plannedTiles.get(key) != plan) {
++                        keepPlanned = false;
 +                        return;
 +                    }
 +                    taskBinding.world.acquireRef();
 +                    acquired = true;
-+
-+                    int dx = chunkX - this.playerChunkX;
-+                    int dz = chunkZ - this.playerChunkZ;
-+                    int inner = this.innerRadius;
-+                    if (dx * dx + dz * dz < inner * inner) {
-+                        return;
-+                    }
-+
-+                    generateChunk(taskBinding, key, chunkX, chunkZ, stride);
++                    keepPlanned = generateWaveTile(
++                            taskBinding, key, plan, tileX, tileZ);
 +                } catch (Throwable throwable) {
-+                    keepSeen = false;
-+                    Logger.error("Seed LOD generation failed for chunk " + chunkX + ", " + chunkZ, throwable);
++                    keepPlanned = false;
++                    Logger.error("Seed LOD wave generation failed for tile "
++                            + tileX + ", " + tileZ, throwable);
 +                } finally {
 +                    if (acquired && taskBinding.world.isLive()) {
 +                        taskBinding.world.releaseRef();
 +                    }
-+                    if (!keepSeen && this.binding == taskBinding
-+                            && Integer.valueOf(stride).equals(this.plannedStrides.get(key))) {
-+                        if (previousStride == null) {
-+                            this.plannedStrides.remove(key, stride);
-+                        } else {
-+                            this.plannedStrides.replace(key, stride, previousStride);
-+                        }
++                    if (keepPlanned) {
++                        this.completedTiles.merge(key, plan.stride, Math::min);
 +                    }
++                    this.plannedTiles.remove(key, plan);
 +                    this.pendingTasks.decrementAndGet();
 +                }
 +            }));
 +        } catch (RejectedExecutionException ignored) {
 +            this.pendingTasks.decrementAndGet();
-+            if (previousStride == null) {
-+                this.plannedStrides.remove(key, stride);
-+            } else {
-+                this.plannedStrides.replace(key, stride, previousStride);
-+            }
++            this.plannedTiles.remove(key, plan);
 +        }
 +    }
 +
@@ -467,159 +439,6 @@ index 00000000..2b7ded7f
 +        }
 +    }
 +
-+    private boolean scheduleCoarseTiles(Binding taskBinding, int targetRadius) {
-+        int minTileX = Math.floorDiv(this.scanCenterX - targetRadius, COARSE_TILE_CHUNKS);
-+        int maxTileX = Math.floorDiv(this.scanCenterX + targetRadius, COARSE_TILE_CHUNKS);
-+        int minTileZ = Math.floorDiv(this.scanCenterZ - targetRadius, COARSE_TILE_CHUNKS);
-+        int maxTileZ = Math.floorDiv(this.scanCenterZ + targetRadius, COARSE_TILE_CHUNKS);
-+        long targetSquared = (long) targetRadius * targetRadius;
-+        boolean allScheduled = true;
-+        int enqueued = 0;
-+
-+        for (int tileZ = minTileZ; tileZ <= maxTileZ; tileZ++) {
-+            for (int tileX = minTileX; tileX <= maxTileX; tileX++) {
-+                long minimumDistanceSquared = minimumDistanceSquaredToTile(
-+                        this.scanCenterX, this.scanCenterZ, tileX, tileZ);
-+                if (minimumDistanceSquared > targetSquared) {
-+                    continue;
-+                }
-+
-+                long key = net.minecraft.world.level.ChunkPos.pack(tileX, tileZ);
-+                if (this.plannedCoarseTiles.contains(key)) {
-+                    continue;
-+                }
-+                if (this.pendingTasks.get() >= MAX_PENDING_TASKS
-+                        || enqueued >= MAX_COARSE_ENQUEUE_PER_TICK) {
-+                    allScheduled = false;
-+                    continue;
-+                }
-+                if (!this.plannedCoarseTiles.add(key)) {
-+                    continue;
-+                }
-+
-+                int finalTileX = tileX;
-+                int finalTileZ = tileZ;
-+                this.pendingTasks.incrementAndGet();
-+                try {
-+                    this.executor.execute(new PrioritizedTask(COARSE_PRIORITY,
-+                            Math.sqrt(minimumDistanceSquared), this.taskSequence.getAndIncrement(), () -> {
-+                        boolean keepPlanned = true;
-+                        boolean acquired = false;
-+                        try {
-+                            if (this.binding != taskBinding || !VoxyConfig.CONFIG.seedLodEnabled
-+                                    || !taskBinding.world.isLive()) {
-+                                return;
-+                            }
-+                            taskBinding.world.acquireRef();
-+                            acquired = true;
-+                            generateCoarseTile(taskBinding, finalTileX, finalTileZ);
-+                        } catch (Throwable throwable) {
-+                            keepPlanned = false;
-+                            Logger.error("Sparse seed LOD generation failed for tile "
-+                                    + finalTileX + ", " + finalTileZ, throwable);
-+                        } finally {
-+                            if (acquired && taskBinding.world.isLive()) {
-+                                taskBinding.world.releaseRef();
-+                            }
-+                            if (!keepPlanned && this.binding == taskBinding) {
-+                                this.plannedCoarseTiles.remove(key);
-+                            }
-+                            this.pendingTasks.decrementAndGet();
-+                        }
-+                    }));
-+                    enqueued++;
-+                } catch (RejectedExecutionException ignored) {
-+                    this.pendingTasks.decrementAndGet();
-+                    this.plannedCoarseTiles.remove(key);
-+                    allScheduled = false;
-+                }
-+            }
-+        }
-+        return allScheduled;
-+    }
-+
-+    private boolean scheduleDetailTiles(Binding taskBinding, int detailRadius) {
-+        int minTileX = Math.floorDiv(this.scanCenterX - detailRadius, DETAIL_TILE_CHUNKS);
-+        int maxTileX = Math.floorDiv(this.scanCenterX + detailRadius, DETAIL_TILE_CHUNKS);
-+        int minTileZ = Math.floorDiv(this.scanCenterZ - detailRadius, DETAIL_TILE_CHUNKS);
-+        int maxTileZ = Math.floorDiv(this.scanCenterZ + detailRadius, DETAIL_TILE_CHUNKS);
-+        long detailSquared = (long) detailRadius * detailRadius;
-+        boolean allScheduled = true;
-+        int enqueued = 0;
-+
-+        for (int tileZ = minTileZ; tileZ <= maxTileZ; tileZ++) {
-+            for (int tileX = minTileX; tileX <= maxTileX; tileX++) {
-+                long minimumDistanceSquared = minimumDistanceSquaredToRegion(
-+                        this.scanCenterX, this.scanCenterZ, tileX, tileZ, DETAIL_TILE_CHUNKS);
-+                if (minimumDistanceSquared > detailSquared) {
-+                    continue;
-+                }
-+
-+                int distanceSquared = (int) Math.min(Integer.MAX_VALUE, minimumDistanceSquared);
-+                int stride = progressiveStrideForDistance(
-+                        distanceSquared, this.innerRadius, detailRadius);
-+                long key = net.minecraft.world.level.ChunkPos.pack(tileX, tileZ);
-+                Integer previousStride = this.plannedDetailTiles.get(key);
-+                if (previousStride != null && previousStride <= stride) {
-+                    continue;
-+                }
-+                if (this.pendingTasks.get() >= MAX_PENDING_TASKS || enqueued >= MAX_ENQUEUE_PER_TICK) {
-+                    allScheduled = false;
-+                    continue;
-+                }
-+                this.plannedDetailTiles.put(key, stride);
-+
-+                int finalTileX = tileX;
-+                int finalTileZ = tileZ;
-+                this.pendingTasks.incrementAndGet();
-+                try {
-+                    this.executor.execute(new PrioritizedTask(DETAIL_PRIORITY,
-+                            Math.sqrt(minimumDistanceSquared), this.taskSequence.getAndIncrement(), () -> {
-+                        boolean keepPlanned = true;
-+                        boolean acquired = false;
-+                        try {
-+                            if (this.binding != taskBinding || !VoxyConfig.CONFIG.seedLodEnabled
-+                                    || !taskBinding.world.isLive()
-+                                    || !Integer.valueOf(stride).equals(this.plannedDetailTiles.get(key))) {
-+                                return;
-+                            }
-+                            taskBinding.world.acquireRef();
-+                            acquired = true;
-+                            generateDetailTile(taskBinding, key, finalTileX, finalTileZ, stride);
-+                        } catch (Throwable throwable) {
-+                            keepPlanned = false;
-+                            Logger.error("Seed LOD refinement failed for tile "
-+                                    + finalTileX + ", " + finalTileZ, throwable);
-+                        } finally {
-+                            if (acquired && taskBinding.world.isLive()) {
-+                                taskBinding.world.releaseRef();
-+                            }
-+                            if (!keepPlanned && this.binding == taskBinding
-+                                    && Integer.valueOf(stride).equals(this.plannedDetailTiles.get(key))) {
-+                                if (previousStride == null) {
-+                                    this.plannedDetailTiles.remove(key, stride);
-+                                } else {
-+                                    this.plannedDetailTiles.replace(key, stride, previousStride);
-+                                }
-+                            }
-+                            this.pendingTasks.decrementAndGet();
-+                        }
-+                    }));
-+                    enqueued++;
-+                } catch (RejectedExecutionException ignored) {
-+                    this.pendingTasks.decrementAndGet();
-+                    if (previousStride == null) {
-+                        this.plannedDetailTiles.remove(key, stride);
-+                    } else {
-+                        this.plannedDetailTiles.replace(key, stride, previousStride);
-+                    }
-+                    allScheduled = false;
-+                }
-+            }
-+        }
-+        return allScheduled;
-+    }
-+
 +    private static long minimumDistanceSquaredToRegion(int centerX, int centerZ,
 +                                                       int regionX, int regionZ, int sizeChunks) {
 +        int minX = regionX * sizeChunks;
@@ -631,280 +450,99 @@ index 00000000..2b7ded7f
 +        return dx * dx + dz * dz;
 +    }
 +
-+    private static long minimumDistanceSquaredToTile(int centerX, int centerZ, int tileX, int tileZ) {
-+        return minimumDistanceSquaredToRegion(centerX, centerZ, tileX, tileZ, COARSE_TILE_CHUNKS);
-+    }
-+
-+    private static void generateCoarseTile(Binding binding, int tileX, int tileZ) {
-+        if (hasCompleteCoarseTile(binding, tileX, tileZ)) {
-+            return;
-+        }
-+
++    private boolean generateWaveTile(Binding binding, long tileKey, TilePlan plan,
++                                     int tileX, int tileZ) {
++        int stride = plan.stride;
++        int originChunkX = tileX * WAVE_TILE_CHUNKS;
++        int originChunkZ = tileZ * WAVE_TILE_CHUNKS;
++        int originBlockX = originChunkX << 4;
++        int originBlockZ = originChunkZ << 4;
++        int tileBlocks = WAVE_TILE_CHUNKS << 4;
++        int cells = tileBlocks / stride;
++        int sampleWidth = cells + 2;
 +        int minY = binding.level.getMinY();
 +        int maxY = binding.level.getMaxY();
-+        int originBlockX = tileX * 512;
-+        int originBlockZ = tileZ * 512;
-+        Sample[] samples = new Sample[COARSE_GRID_SAMPLES * COARSE_GRID_SAMPLES];
-+        for (int sampleZ = 0; sampleZ < COARSE_GRID_SAMPLES; sampleZ++) {
-+            for (int sampleX = 0; sampleX < COARSE_GRID_SAMPLES; sampleX++) {
-+                samples[sampleZ * COARSE_GRID_SAMPLES + sampleX] = sample(binding,
-+                        originBlockX + sampleX * COARSE_SAMPLE_BLOCKS,
-+                        originBlockZ + sampleZ * COARSE_SAMPLE_BLOCKS, minY, maxY);
-+            }
-+        }
++        Sample[] samples = new Sample[sampleWidth * sampleWidth];
 +
-+        Sample[] columns = new Sample[32 * 32];
-+        for (int z = 0; z < 32; z++) {
-+            for (int x = 0; x < 32; x++) {
-+                columns[(z << 5) | x] = coarseTerrainSample(samples, x, z,
-+                        VoxyConfig.CONFIG.seedLodSmoothing);
-+            }
-+        }
-+
-+        Mapper mapper = binding.world.getMapper();
-+        Map<Integer, WorldSection> sections = new HashMap<>();
-+        Set<Integer> changedSections = new HashSet<>();
-+        try {
-+            for (int z = 0; z < 32; z++) {
-+                for (int x = 0; x < 32; x++) {
-+                    Sample terrain = columns[(z << 5) | x];
-+                    if (terrain.surfaceY < minY) {
-+                        continue;
-+                    }
-+                    int bottomY = Math.max(minY, Math.min(
-+                            terrain.floorY - COARSE_SAMPLE_BLOCKS + 1,
-+                            lowestNeighborCoarseFloor(columns, x, z, terrain.floorY)));
-+                    int bottomVoxel = Math.floorDiv(bottomY, COARSE_VOXEL_BLOCKS);
-+                    int floorVoxel = Math.floorDiv(terrain.floorY, COARSE_VOXEL_BLOCKS);
-+                    int surfaceVoxel = Math.floorDiv(terrain.surfaceY, COARSE_VOXEL_BLOCKS);
-+                    long stoneId = prediction(mapper.getBaseId((byte) 15,
-+                            Blocks.STONE.defaultBlockState(), terrain.biome));
-+
-+                    if (terrain.isOcean()) {
-+                        for (int y = bottomVoxel; y < floorVoxel; y++) {
-+                            putCoarseVoxel(binding.world, sections, changedSections,
-+                                    tileX, tileZ, x, y, z, stoneId);
-+                        }
-+                        if (floorVoxel < surfaceVoxel) {
-+                            long floorId = prediction(mapper.getBaseId((byte) 15,
-+                                    terrain.floorBlock, terrain.biome));
-+                            putCoarseVoxel(binding.world, sections, changedSections,
-+                                    tileX, tileZ, x, floorVoxel, z, floorId);
-+                        }
-+                        long waterId = prediction(mapper.getBaseId((byte) 15,
-+                                Blocks.WATER.defaultBlockState(), terrain.biome));
-+                        for (int y = Math.max(floorVoxel + 1, bottomVoxel); y <= surfaceVoxel; y++) {
-+                            putCoarseVoxel(binding.world, sections, changedSections,
-+                                    tileX, tileZ, x, y, z, waterId);
-+                        }
-+                        if (floorVoxel >= surfaceVoxel) {
-+                            putCoarseVoxel(binding.world, sections, changedSections,
-+                                    tileX, tileZ, x, surfaceVoxel, z, waterId);
-+                        }
-+                    } else {
-+                        for (int y = bottomVoxel; y < surfaceVoxel; y++) {
-+                            putCoarseVoxel(binding.world, sections, changedSections,
-+                                    tileX, tileZ, x, y, z, stoneId);
-+                        }
-+                        long surfaceId = prediction(mapper.getBaseId((byte) 15,
-+                                terrain.surfaceBlock, terrain.biome));
-+                        putCoarseVoxel(binding.world, sections, changedSections,
-+                                tileX, tileZ, x, surfaceVoxel, z, surfaceId);
-+                    }
-+                }
-+            }
-+
-+            for (int sectionY : changedSections) {
-+                binding.world.markDirty(sections.get(sectionY), WorldEngine.UPDATE_TYPE_BLOCK_BIT, 0x3F);
-+            }
-+        } finally {
-+            for (WorldSection section : sections.values()) {
-+                section.release();
-+            }
-+        }
-+    }
-+
-+    private static Sample coarseTerrainSample(Sample[] samples, int localX, int localZ, boolean smoothing) {
-+        int sampleX = localX >> 1;
-+        int sampleZ = localZ >> 1;
-+        int fractionX = (localX & 1) * COARSE_VOXEL_BLOCKS + COARSE_VOXEL_BLOCKS / 2;
-+        int fractionZ = (localZ & 1) * COARSE_VOXEL_BLOCKS + COARSE_VOXEL_BLOCKS / 2;
-+        Sample s00 = samples[sampleZ * COARSE_GRID_SAMPLES + sampleX];
-+        Sample s10 = samples[sampleZ * COARSE_GRID_SAMPLES + sampleX + 1];
-+        Sample s01 = samples[(sampleZ + 1) * COARSE_GRID_SAMPLES + sampleX];
-+        Sample s11 = samples[(sampleZ + 1) * COARSE_GRID_SAMPLES + sampleX + 1];
-+        Sample nearest = (fractionZ < COARSE_SAMPLE_BLOCKS / 2)
-+                ? (fractionX < COARSE_SAMPLE_BLOCKS / 2 ? s00 : s10)
-+                : (fractionX < COARSE_SAMPLE_BLOCKS / 2 ? s01 : s11);
-+        if (!smoothing) {
-+            return nearest;
-+        }
-+        int surfaceY = bilinear(s00.surfaceY, s10.surfaceY, s01.surfaceY, s11.surfaceY,
-+                fractionX, fractionZ, COARSE_SAMPLE_BLOCKS);
-+        int floorY = Math.min(surfaceY, bilinear(s00.floorY, s10.floorY, s01.floorY, s11.floorY,
-+                fractionX, fractionZ, COARSE_SAMPLE_BLOCKS));
-+        return new Sample(surfaceY, floorY, nearest.biome, nearest.surfaceBlock, nearest.floorBlock);
-+    }
-+
-+    private static int lowestNeighborCoarseFloor(Sample[] columns, int x, int z, int fallback) {
-+        int lowest = fallback;
-+        for (int dz = -1; dz <= 1; dz++) {
-+            int neighborZ = z + dz;
-+            if (neighborZ < 0 || neighborZ >= 32) continue;
-+            for (int dx = -1; dx <= 1; dx++) {
-+                int neighborX = x + dx;
-+                if (neighborX < 0 || neighborX >= 32) continue;
-+                lowest = Math.min(lowest, columns[(neighborZ << 5) | neighborX].floorY);
-+            }
-+        }
-+        return lowest;
-+    }
-+
-+    private static void putCoarseVoxel(WorldEngine world, Map<Integer, WorldSection> sections,
-+                                       Set<Integer> changedSections, int tileX, int tileZ,
-+                                       int localX, int voxelY, int localZ, long id) {
-+        int sectionY = Math.floorDiv(voxelY, 32);
-+        WorldSection section = sections.computeIfAbsent(sectionY,
-+                ignored -> world.acquire(COARSE_LOD_LEVEL, tileX, sectionY, tileZ));
-+        int index = WorldSection.getIndex(localX, Math.floorMod(voxelY, 32), localZ);
-+        long[] data = section._unsafeGetRawDataArray();
-+        long previous = data[index];
-+        if (!Mapper.isAir(previous) && (previous & PREDICTION_MARKER) == 0) {
-+            return;
-+        }
-+        if (previous != id) {
-+            data[index] = id;
-+            changedSections.add(sectionY);
-+        }
-+    }
-+
-+    private static boolean hasCompleteCoarseTile(Binding binding, int tileX, int tileZ) {
-+        int minSectionY = Math.floorDiv(binding.level.getMinY(), 512);
-+        int maxSectionY = Math.floorDiv(binding.level.getMaxY() - 1, 512);
-+        Map<Integer, WorldSection> sections = new HashMap<>();
-+        try {
-+            for (int sectionY = minSectionY; sectionY <= maxSectionY; sectionY++) {
-+                WorldSection section = binding.world.acquireIfExists(
-+                        COARSE_LOD_LEVEL, tileX, sectionY, tileZ);
-+                if (section != null) {
-+                    sections.put(sectionY, section);
-+                }
-+            }
-+            if (sections.isEmpty()) {
++        // One shared sample grid covers the complete tile. Adjacent chunks no
++        // longer repeat the same halo queries, which is the main speedup over
++        // the old per-chunk spiral.
++        for (int cellZ = -1; cellZ <= cells; cellZ++) {
++            if (!isCurrentWaveTask(binding, tileKey, plan)) {
 +                return false;
 +            }
-+            for (int z = 0; z < 32; z++) {
-+                for (int x = 0; x < 32; x++) {
-+                    boolean populated = false;
-+                    for (WorldSection section : sections.values()) {
-+                        long[] data = section._unsafeGetRawDataArray();
-+                        for (int y = 0; y < 32; y++) {
-+                            if (!Mapper.isAir(data[WorldSection.getIndex(x, y, z)])) {
-+                                populated = true;
-+                                break;
-+                            }
-+                        }
-+                        if (populated) break;
-+                    }
-+                    if (!populated) {
-+                        return false;
-+                    }
-+                }
-+            }
-+            return true;
-+        } finally {
-+            for (WorldSection section : sections.values()) {
-+                section.release();
-+            }
-+        }
-+    }
-+
-+    private void generateChunk(Binding binding, long key, int chunkX, int chunkZ, int stride) {
-+        Int2ObjectOpenHashMap<VoxelizedSection> sections = buildChunkSections(
-+                binding, chunkX, chunkZ, stride);
-+        if (sections.isEmpty()
-+                || !Integer.valueOf(stride).equals(this.plannedStrides.get(key))
-+                || hasExistingData(binding.world, chunkX, chunkZ, sections.keySet())) {
-+            return;
-+        }
-+        for (VoxelizedSection section : sections.values()) {
-+            WorldUpdater.insertUpdate(binding.world, section);
-+        }
-+    }
-+
-+    private void generateDetailTile(Binding binding, long tileKey, int tileX, int tileZ, int stride) {
-+        List<BuiltChunk> chunks = new ArrayList<>(DETAIL_TILE_CHUNKS * DETAIL_TILE_CHUNKS);
-+        int originChunkX = tileX * DETAIL_TILE_CHUNKS;
-+        int originChunkZ = tileZ * DETAIL_TILE_CHUNKS;
-+
-+        for (int localZ = 0; localZ < DETAIL_TILE_CHUNKS; localZ++) {
-+            for (int localX = 0; localX < DETAIL_TILE_CHUNKS; localX++) {
-+                if (this.binding != binding
-+                        || !Integer.valueOf(stride).equals(this.plannedDetailTiles.get(tileKey))) {
-+                    return;
-+                }
-+                int chunkX = originChunkX + localX;
-+                int chunkZ = originChunkZ + localZ;
-+                Int2ObjectOpenHashMap<VoxelizedSection> sections = buildChunkSections(
-+                        binding, chunkX, chunkZ, stride);
-+                if (!sections.isEmpty()) {
-+                    chunks.add(new BuiltChunk(chunkX, chunkZ, sections));
-+                }
++            for (int cellX = -1; cellX <= cells; cellX++) {
++                samples[(cellZ + 1) * sampleWidth + cellX + 1] = sample(binding,
++                        originBlockX + cellX * stride + stride / 2,
++                        originBlockZ + cellZ * stride + stride / 2, minY, maxY);
 +            }
 +        }
 +
-+        if (this.binding != binding
-+                || !Integer.valueOf(stride).equals(this.plannedDetailTiles.get(tileKey))) {
-+            return;
++        int centerX = this.playerChunkX;
++        int centerZ = this.playerChunkZ;
++        List<ChunkCoordinate> chunks = new ArrayList<>(WAVE_TILE_CHUNKS * WAVE_TILE_CHUNKS);
++        for (int localZ = 0; localZ < WAVE_TILE_CHUNKS; localZ++) {
++            for (int localX = 0; localX < WAVE_TILE_CHUNKS; localX++) {
++                chunks.add(new ChunkCoordinate(originChunkX + localX, originChunkZ + localZ,
++                        localX << 4, localZ << 4));
++            }
 +        }
++        chunks.sort((left, right) -> Long.compare(
++                distanceSquared(left.chunkX, left.chunkZ, centerX, centerZ),
++                distanceSquared(right.chunkX, right.chunkZ, centerX, centerZ)));
 +
-+        // Keep the coarse parent mesh active while a complete 16 by 16-chunk
-+        // child region is committed. Publishing only after the batch prevents
-+        // partially generated children from punching rectangular holes in it.
-+        WorldUpdater.DeferredUpdate deferred = new WorldUpdater.DeferredUpdate();
-+        for (BuiltChunk chunk : chunks) {
-+            if (hasExistingData(binding.world, chunk.chunkX(), chunk.chunkZ(), chunk.sections().keySet())) {
++        for (ChunkCoordinate chunk : chunks) {
++            if (!isCurrentWaveTask(binding, tileKey, plan)) {
++                return false;
++            }
++            Int2ObjectOpenHashMap<VoxelizedSection> sections = buildChunkSectionsFromGrid(
++                    binding, chunk.chunkX, chunk.chunkZ, stride, samples, sampleWidth,
++                    chunk.sampleBlockX, chunk.sampleBlockZ);
++            if (sections.isEmpty()
++                    || hasExistingData(binding.world, chunk.chunkX, chunk.chunkZ, sections.keySet())) {
 +                continue;
 +            }
-+            for (VoxelizedSection section : chunk.sections().values()) {
-+                WorldUpdater.insertUpdate(binding.world, section, deferred);
++            for (VoxelizedSection section : sections.values()) {
++                WorldUpdater.insertUpdate(binding.world, section);
 +            }
 +        }
-+        deferred.publish(binding.world);
++        return true;
 +    }
 +
-+    private static Int2ObjectOpenHashMap<VoxelizedSection> buildChunkSections(
-+            Binding binding, int chunkX, int chunkZ, int stride) {
-+        int cells = 16 / stride;
-+        int sampleWidth = cells + 2;
-+        Sample[] samples = new Sample[sampleWidth * sampleWidth];
++    private boolean isCurrentWaveTask(Binding binding, long tileKey, TilePlan plan) {
++        return this.binding == binding && this.scanGeneration == plan.generation
++                && binding.world.isLive() && VoxyConfig.CONFIG.seedLodEnabled
++                && this.plannedTiles.get(tileKey) == plan;
++    }
++
++    private static long distanceSquared(int x, int z, int centerX, int centerZ) {
++        long dx = (long) x - centerX;
++        long dz = (long) z - centerZ;
++        return dx * dx + dz * dz;
++    }
++
++    private static Int2ObjectOpenHashMap<VoxelizedSection> buildChunkSectionsFromGrid(
++            Binding binding, int chunkX, int chunkZ, int stride,
++            Sample[] samples, int sampleWidth, int sampleBlockX, int sampleBlockZ) {
 +        int minY = binding.level.getMinY();
 +        int maxY = binding.level.getMaxY();
-+
-+        // Include a one-cell halo so skirts agree across chunk boundaries.
-+        for (int cellZ = -1; cellZ <= cells; cellZ++) {
-+            for (int cellX = -1; cellX <= cells; cellX++) {
-+                int blockX = (chunkX << 4) + cellX * stride + stride / 2;
-+                int blockZ = (chunkZ << 4) + cellZ * stride + stride / 2;
-+                samples[(cellZ + 1) * sampleWidth + cellX + 1] =
-+                        sample(binding, blockX, blockZ, minY, maxY);
-+            }
-+        }
-+
 +        Mapper mapper = binding.world.getMapper();
 +        var sections = new Int2ObjectOpenHashMap<VoxelizedSection>();
 +        Sample[] columns = new Sample[16 * 16];
++
 +        for (int localZ = 0; localZ < 16; localZ++) {
 +            for (int localX = 0; localX < 16; localX++) {
-+                Sample terrain = terrainSample(samples, sampleWidth, stride, localX, localZ,
-+                        VoxyConfig.CONFIG.seedLodSmoothing);
++                int tileBlockX = sampleBlockX + localX;
++                int tileBlockZ = sampleBlockZ + localZ;
++                Sample terrain = terrainSample(samples, sampleWidth, stride,
++                        tileBlockX, tileBlockZ, VoxyConfig.CONFIG.seedLodSmoothing);
 +                columns[(localZ << 4) | localX] = terrain;
 +                if (terrain.surfaceY < minY) {
 +                    continue;
 +                }
 +
-+                int sampleX = Math.min(cells, localX / stride + 1);
-+                int sampleZ = Math.min(cells, localZ / stride + 1);
++                int sampleX = Math.min(sampleWidth - 2, tileBlockX / stride + 1);
++                int sampleZ = Math.min(sampleWidth - 2, tileBlockZ / stride + 1);
 +                int bottomY = Math.max(minY, Math.min(terrain.floorY - stride + 1,
 +                        lowestNeighborFloor(samples, sampleWidth, sampleX, sampleZ, terrain.floorY)));
 +                if (terrain.isOcean()) {
@@ -939,7 +577,6 @@ index 00000000..2b7ded7f
 +        if (VoxyConfig.CONFIG.seedLodVegetation) {
 +            addVegetation(binding, mapper, sections, chunkX, chunkZ, columns, maxY);
 +        }
-+
 +        for (VoxelizedSection section : sections.values()) {
 +            WorldVoxilizedSectionMipper.mipSection(section, mapper);
 +        }
@@ -1440,24 +1077,6 @@ index 00000000..2b7ded7f
 +        return 8;
 +    }
 +
-+    private static int progressiveStrideForDistance(int distanceSquared,
-+                                                    int innerRadius, int outerRadius) {
-+        int maximum = sanitizeStride(VoxyConfig.CONFIG.seedLodSampleStride);
-+        if (maximum == 2) {
-+            return 2;
-+        }
-+        double distance = Math.sqrt(distanceSquared);
-+        double range = Math.max(1.0, outerRadius - innerRadius);
-+        double progress = Math.max(0.0, Math.min(1.0, (distance - innerRadius) / range));
-+        if (progress < 0.28) {
-+            return 2;
-+        }
-+        if (maximum == 4 || progress < 0.68) {
-+            return 4;
-+        }
-+        return 8;
-+    }
-+
 +    private static Offset squareSpiral(long index) {
 +        if (index == 0) {
 +            return new Offset(0, 0);
@@ -1479,9 +1098,8 @@ index 00000000..2b7ded7f
 +        this.stopped = true;
 +        this.binding = null;
 +        this.executor.shutdownNow();
-+        this.plannedStrides.clear();
-+        this.plannedCoarseTiles.clear();
-+        this.plannedDetailTiles.clear();
++        this.plannedTiles.clear();
++        this.completedTiles.clear();
 +    }
 +
 +    private static final class Binding {
@@ -1505,8 +1123,8 @@ index 00000000..2b7ded7f
 +    }
 +    private record SurfaceKey(String biomeId, int altitudeBand, boolean ocean) {}
 +    private record SurfaceMaterial(BlockState surface, BlockState floor) {}
-+    private record BuiltChunk(int chunkX, int chunkZ,
-+                              Int2ObjectOpenHashMap<VoxelizedSection> sections) {}
++    private record ChunkCoordinate(int chunkX, int chunkZ, int sampleBlockX, int sampleBlockZ) {}
++    private record TilePlan(int stride, long generation) {}
 +    private record Sample(int surfaceY, int floorY, Holder<Biome> biome,
 +                          BlockState surfaceBlock, BlockState floorBlock) {
 +        boolean isOcean() {
@@ -1534,133 +1152,11 @@ index 00000000..2b7ded7f
 +        }
 +    }
 +}
-diff --git a/src/main/java/me/cortex/voxy/common/world/WorldEngine.java b/src/main/java/me/cortex/voxy/common/world/WorldEngine.java
-index 01add640..b6803672 100644
---- a/src/main/java/me/cortex/voxy/common/world/WorldEngine.java
-+++ b/src/main/java/me/cortex/voxy/common/world/WorldEngine.java
-@@ -117,6 +117,25 @@ public final class WorldEngine {
-     }
- 
-     public void markDirty(WorldSection section, int changeState, int neighborMsk) {
-+        this.publishDirtyEvent(section, changeState, neighborMsk);
-+        if ((changeState&UPDATE_TYPE_DONT_SAVE)==0) {
-+            section.markDirty();
-+        }
-+    }
-+
-+    /**
-+     * Marks data for persistence without exposing an incomplete hierarchy to
-+     * the renderer. The caller must later invoke {@link #publishDirtyEvent}.
-+     */
-+    public void markDirtyDeferred(WorldSection section) {
-+        if (!this.isLive) throw new IllegalStateException("World is not live");
-+        if (section.tracker != this.sectionTracker) {
-+            throw new IllegalStateException("Section is not from here");
-+        }
-+        section.markDirty();
-+    }
-+
-+    public void publishDirtyEvent(WorldSection section, int changeState, int neighborMsk) {
-         if (!this.isLive) throw new IllegalStateException("World is not live");
-         if (section.tracker != this.sectionTracker) {
-             throw new IllegalStateException("Section is not from here");
-@@ -124,9 +143,6 @@ public final class WorldEngine {
-         if (this.dirtyCallback != null) {
-             this.dirtyCallback.accept(section, changeState, neighborMsk);
-         }
--        if ((changeState&UPDATE_TYPE_DONT_SAVE)==0) {
--            section.markDirty();
--        }
-     }
- 
-     public void addDebugData(List<String> debug) {
-diff --git a/src/main/java/me/cortex/voxy/common/world/WorldUpdater.java b/src/main/java/me/cortex/voxy/common/world/WorldUpdater.java
-index 1ab705b9..4e10fec7 100644
---- a/src/main/java/me/cortex/voxy/common/world/WorldUpdater.java
-+++ b/src/main/java/me/cortex/voxy/common/world/WorldUpdater.java
-@@ -4,6 +4,10 @@ import me.cortex.voxy.common.voxelization.VoxelizedSection;
- import me.cortex.voxy.common.world.other.Mapper;
- import me.cortex.voxy.commonImpl.VoxyCommon;
- 
-+import java.util.ArrayList;
-+import java.util.HashMap;
-+import java.util.Map;
-+
- import static me.cortex.voxy.common.world.WorldEngine.*;
- 
- public class WorldUpdater {
-@@ -11,6 +15,10 @@ public class WorldUpdater {
- 
-     //NOTE: THIS RUNS ON THE THREAD IT WAS EXECUTED ON, when this method exits, the calling method may assume that VoxelizedSection is no longer needed
-     public static void insertUpdate(WorldEngine into, VoxelizedSection section) {//TODO: add a bitset of levels to update and if it should force update
-+        insertUpdate(into, section, null);
-+    }
-+
-+    public static void insertUpdate(WorldEngine into, VoxelizedSection section, DeferredUpdate deferred) {
- 
-         //Do some very cheeky stuff for MiB
-         if (VoxyCommon.IS_MINE_IN_ABYSS) {
-@@ -61,7 +69,14 @@ public class WorldUpdater {
-                     neighbors |= ((section.z^(section.z+1))>>(lvl+1))==0?0:1<<5;//+z
-                 }
- 
--                into.markDirty(worldSection, (didStateChange?UPDATE_TYPE_BLOCK_BIT:0)|(emptinessStateChange!=0?UPDATE_TYPE_CHILD_EXISTENCE_BIT:0), neighbors);
-+                int flags = (didStateChange?UPDATE_TYPE_BLOCK_BIT:0)
-+                        | (emptinessStateChange!=0?UPDATE_TYPE_CHILD_EXISTENCE_BIT:0);
-+                if (deferred == null) {
-+                    into.markDirty(worldSection, flags, neighbors);
-+                } else {
-+                    into.markDirtyDeferred(worldSection);
-+                    deferred.record(worldSection.key, flags, neighbors);
-+                }
-             }
- 
-             //Need to release the section after using it
-@@ -89,6 +104,39 @@ public class WorldUpdater {
-         }
-     }
- 
-+    /**
-+     * Coalesces renderer notifications while a complete replacement region is
-+     * inserted. World data is persisted normally, but the old parent mesh stays
-+     * visible until {@link #publish(WorldEngine)} exposes the finished children.
-+     */
-+    public static final class DeferredUpdate {
-+        private final Map<Long, Long> changes = new HashMap<>();
-+
-+        private void record(long sectionKey, int flags, int neighbors) {
-+            long packed = Integer.toUnsignedLong(flags) | (Integer.toUnsignedLong(neighbors) << 32);
-+            this.changes.merge(sectionKey, packed, (left, right) -> left | right);
-+        }
-+
-+        public void publish(WorldEngine world) {
-+            var orderedChanges = new ArrayList<>(this.changes.entrySet());
-+            orderedChanges.sort((left, right) -> Integer.compare(
-+                    getLevel(left.getKey()), getLevel(right.getKey())));
-+            for (Map.Entry<Long, Long> entry : orderedChanges) {
-+                WorldSection section = world.acquireIfExists(entry.getKey());
-+                if (section == null) {
-+                    continue;
-+                }
-+                try {
-+                    long packed = entry.getValue();
-+                    world.publishDirtyEvent(section, (int) packed, (int) (packed >>> 32));
-+                } finally {
-+                    section.release();
-+                }
-+            }
-+            this.changes.clear();
-+        }
-+    }
-+
- 
-     private static long insertSectionLvlIntoWorld(VoxelizedSection section, WorldSection worldSection) {
-         final long[] vdat = section.section;
 diff --git a/src/main/resources/assets/voxy/lang/en_us.json b/src/main/resources/assets/voxy/lang/en_us.json
-index 08d1299b..24135aff 100644
+index 08d1299be583fca45559a359469e8ba239d9a52e..cbbe0572d2ac33a16e7e282454c0130e44de83c7 100644
 --- a/src/main/resources/assets/voxy/lang/en_us.json
 +++ b/src/main/resources/assets/voxy/lang/en_us.json
-@@ -16,6 +16,36 @@
+@@ -16,6 +16,30 @@
    "voxy.config.general.ingest": "Chunk Ingest",
    "voxy.config.general.ingest.tooltip": "Enables or disables voxies ability to convert new chunks into LoDs",
  
@@ -1670,17 +1166,11 @@ index 08d1299b..24135aff 100644
 +  "voxy.config.general.seed_lod_distance": "Seed LOD distance",
 +  "voxy.config.general.seed_lod_distance.tooltip": "Prediction radius in chunks. Higher values take longer to fill and use more Voxy cache space.",
 +
-+  "voxy.config.general.seed_lod_sparse_loading": "Instant sparse loading",
-+  "voxy.config.general.seed_lod_sparse_loading.tooltip": "Fills the complete distance first with persistent 32-block samples in 512-block Voxy tiles, then refines only the configured detail distance. Disable to generate detailed predicted chunks across the entire radius.",
-+
-+  "voxy.config.general.seed_lod_sparse_detail_distance": "Progressive reconstruction distance",
-+  "voxy.config.general.seed_lod_sparse_detail_distance.tooltip": "After the complete low-quality world appears, aligned regions inside this radius are reconstructed at stride 2 nearby, stride 4 at medium range and up to stride 8 farther away. The barely visible horizon stays sparse.",
-+
 +  "voxy.config.general.seed_lod_stride": "Seed LOD maximum sample stride",
-+  "voxy.config.general.seed_lod_stride.tooltip": "Farthest terrain sampling interval. With adaptive quality enabled, closer predictions automatically use stride 2 or 4.",
++  "voxy.config.general.seed_lod_stride.tooltip": "Farthest terrain sampling interval. The connected loading wave uses stride 2 nearby, stride 4 at medium range, and this maximum at the horizon.",
 +
 +  "voxy.config.general.seed_lod_adaptive_quality": "Adaptive seed LOD quality",
-+  "voxy.config.general.seed_lod_adaptive_quality.tooltip": "Controls distance-based quality for legacy full-radius generation. Instant sparse loading always reconstructs its detail region progressively using stride 2 nearby, stride 4 at medium distance and the configured maximum farther away.",
++  "voxy.config.general.seed_lod_adaptive_quality.tooltip": "Makes the player-centered loading wave high quality nearby, medium quality at middle distance, and progressively cheaper toward the horizon.",
 +
 +  "voxy.config.general.seed_lod_smoothing": "Smooth sampled terrain",
 +  "voxy.config.general.seed_lod_smoothing.tooltip": "Reconstructs smooth one-block terrain columns between sparse seed samples. Abrupt height changes remain cliff-like.",
@@ -1697,7 +1187,7 @@ index 08d1299b..24135aff 100644
    "voxy.config.general.rendering": "Voxy Rendering",
    "voxy.config.general.rendering.tooltip": "Enables or disables voxy rendering",
  
-@@ -38,4 +68,4 @@
+@@ -38,4 +62,4 @@
    "voxy.config.general.ssao_mode.basic": "Basic",
    "voxy.config.general.ssao_mode.better": "Better",
    "voxy.config.general.ssao_mode.best": "Best"
