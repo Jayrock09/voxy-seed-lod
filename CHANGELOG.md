@@ -1,6 +1,18 @@
 # Changelog
 
-## seedlod.9: current patch
+## seedlod.10: current patch
+
+- Moved every experimental seed-generation control into a dedicated Seed LOD page in Voxy's settings.
+- Increased the maximum prediction distance from 512 to 1024 chunks.
+- Added a 4 to 64-chunk adaptive quality-band control. Each band doubles the stride until the configured maximum is reached.
+- Replaced the hard stride-16 vegetation cutoff with a continuous distance fade that always retains a sparse far-field tree population.
+- Replaced deep terrain bodies with a four-block surface shell while extending only actual exposed cliff edges to their lower neighbor.
+- Replaced sampled water volumes with one flat visible water layer at the active generator's datapack sea level.
+- Reduced fast noise-based terrain sampling to one solid-surface height query per lattice point, including oceans.
+- Cached predicted block and biome mapping IDs instead of repeatedly taking Voxy's mapping locks for every reconstructed column.
+- Evaluated OpenGL and OpenCL offload and deliberately did not add a misleading GPU toggle. Minecraft generator and datapack execution is CPU-side, while GPU readback would feed the result back into Voxy's CPU cache path and likely add stalls.
+
+## seedlod.9
 
 - Removed stride 2 and made stride 4 the minimum terrain sampling quality.
 - Expanded the maximum sample stride from 8 to 128 with adaptive 4, 8, 16, 32, 64, and 128-block distance bands.
