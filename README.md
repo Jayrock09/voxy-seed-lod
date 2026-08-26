@@ -58,7 +58,9 @@ This project is unofficial, unsupported by MCRcortex, and not affiliated with Mo
 - Stride 128 retains N=16 cells at level 4 but reduces seed sampling for the farthest horizon band.
 - Every N-sized job fills a complete horizontal native Voxy section before publishing it. A finer child therefore never hides an unfinished portion of its coarser parent.
 - Coarse leaves have their own persistent presence state instead of falsely claiming finer children exist.
-- Before refinement becomes visible, a complete finer child is initialized by expanding its coarse parent. Fine predictions or authoritative real chunks then overlay that background.
+- Before refinement becomes visible, every non-air sibling covered by the coarse parent is initialized from that parent. The entire child mask is safe before Voxy hides the parent, so partial quality transitions cannot expose rectangular sky holes.
+- Sibling coverage completion is stored with the section. Expansion normally runs once per coarse section, and seedlod.15 automatically repairs incomplete hierarchy coverage saved by older patch versions.
+- Existing finer octants are preserved while uncovered octants inherit the fallback. Fine predictions or authoritative real chunks then overlay that background.
 - Parent fallback cells remain populated even where finer children exist, preventing screen-space LOD selection from exposing rectangular holes. Finer child sections remain untouched, and authoritative unmarked parent cells are preserved.
 
 ### Terrain quality
@@ -127,7 +129,7 @@ N-sized generation removes most of the remaining far-field reconstruction. Each 
 The largest savings happen at the horizon, which also contains most of the tiles. Terrain becomes visible near the player immediately and expands as workers finish each gated ring.
 
 - Smoothing adds interpolation work but no additional generator queries.
-- Direct coarse leaves are persisted separately from their finer-child mask. Seedlod.13 publishes complete aligned N-sized sections, and seedlod.14 keeps their parent fallback geometry populated even when finer children exist.
+- Direct coarse leaves are persisted separately from their finer-child mask. Seedlod.13 publishes complete aligned N-sized sections, seedlod.14 keeps their parent fallback geometry populated, and seedlod.15 materializes every required sibling before exposing a finer hierarchy level.
 - Ordinary movement keeps nearby queued work alive. Long teleports discard stale work and reprioritize the destination.
 - Changing either stride limit or the adaptive-quality toggle while a world is open immediately cancels stale plans and rescans the wave at the new quality.
 - Vegetation is hash-thinned before the more expensive local-minimum test. Density falls continuously with distance but never ends at a quality-band border.

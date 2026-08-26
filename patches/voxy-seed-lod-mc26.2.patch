@@ -1,5 +1,5 @@
 diff --git a/gradle.properties b/gradle.properties
-index a25ea295a8fac1778a82242a7570d28587a17905..71beb494dbda4e05878a1e4241aaa94b3e5c7bcd 100644
+index a25ea295..0e6ed474 100644
 --- a/gradle.properties
 +++ b/gradle.properties
 @@ -29,6 +29,6 @@ nvidium_version=0.4.3-beta13-26.1
@@ -7,13 +7,13 @@ index a25ea295a8fac1778a82242a7570d28587a17905..71beb494dbda4e05878a1e4241aaa94b
  
  # Mod Properties
 -mod_version = 0.2.19-beta
-+mod_version = 0.2.19-beta-seedlod.14
++mod_version = 0.2.19-beta-seedlod.15
  maven_group = me.cortex
 -archives_base_name = voxy
 \ No newline at end of file
 +archives_base_name = voxy
 diff --git a/src/main/java/me/cortex/voxy/client/VoxyClient.java b/src/main/java/me/cortex/voxy/client/VoxyClient.java
-index c0029a7d17463ad269b0ce8e0967a6ef9a2a904e..a91e762571c814a8fba04fcf554722dc3f697571 100644
+index c0029a7d..a91e7625 100644
 --- a/src/main/java/me/cortex/voxy/client/VoxyClient.java
 +++ b/src/main/java/me/cortex/voxy/client/VoxyClient.java
 @@ -6,6 +6,7 @@ import me.cortex.voxy.common.Logger;
@@ -46,7 +46,7 @@ index c0029a7d17463ad269b0ce8e0967a6ef9a2a904e..a91e762571c814a8fba04fcf554722dc
 \ No newline at end of file
 +}
 diff --git a/src/main/java/me/cortex/voxy/client/VoxyClientInstance.java b/src/main/java/me/cortex/voxy/client/VoxyClientInstance.java
-index 2dab3784c8f93626f34d38f9cbdfc67b41de7e5a..fb0f1e73ea12f4e28c11e2a359432edd27f2b57b 100644
+index 2dab3784..fb0f1e73 100644
 --- a/src/main/java/me/cortex/voxy/client/VoxyClientInstance.java
 +++ b/src/main/java/me/cortex/voxy/client/VoxyClientInstance.java
 @@ -4,6 +4,7 @@ import me.cortex.voxy.client.compat.FlashbackCompat;
@@ -89,7 +89,7 @@ index 2dab3784c8f93626f34d38f9cbdfc67b41de7e5a..fb0f1e73ea12f4e28c11e2a359432edd
          //Free the render resources cache since the entire instance is freed
          RenderResourceReuse.clearResources();
 diff --git a/src/main/java/me/cortex/voxy/client/config/VoxyConfig.java b/src/main/java/me/cortex/voxy/client/config/VoxyConfig.java
-index b2f5eefb81627cb07dd13f6eebe1a00eef517577..e1f41d7e31779a7a0d13c98a48add90e9676aa79 100644
+index b2f5eefb..e1f41d7e 100644
 --- a/src/main/java/me/cortex/voxy/client/config/VoxyConfig.java
 +++ b/src/main/java/me/cortex/voxy/client/config/VoxyConfig.java
 @@ -35,6 +35,17 @@ public class VoxyConfig {
@@ -111,7 +111,7 @@ index b2f5eefb81627cb07dd13f6eebe1a00eef517577..e1f41d7e31779a7a0d13c98a48add90e
  
      public SSAO.SSAOMode getSSAOMode() {
 diff --git a/src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java b/src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java
-index d456e55c120a93d2a8c223b86c8eedff073cbd8b..2d4a8365e95f1229b4a41d71766c376bd4c1a2e3 100644
+index d456e55c..2d4a8365 100644
 --- a/src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java
 +++ b/src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java
 @@ -79,6 +79,78 @@ public class VoxyConfigMenu implements ConfigEntryPoint {
@@ -195,7 +195,7 @@ index d456e55c120a93d2a8c223b86c8eedff073cbd8b..2d4a8365e95f1229b4a41d71766c376b
                                  new BoolOption(
 diff --git a/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..772efa9ddc50e5a3650f4299b4f344a1cf8df0e9
+index 00000000..772efa9d
 --- /dev/null
 +++ b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java
 @@ -0,0 +1,1266 @@
@@ -1466,48 +1466,52 @@ index 0000000000000000000000000000000000000000..772efa9ddc50e5a3650f4299b4f344a1
 +    }
 +}
 diff --git a/src/main/java/me/cortex/voxy/common/world/SaveLoadSystem3.java b/src/main/java/me/cortex/voxy/common/world/SaveLoadSystem3.java
-index 0a6d31c2e2a8a472bd4ee9d74dbd338e1ee16efa..9d424aa0b7a4d73d84d2f290daef4a1060165e6b 100644
+index 0a6d31c2..a8842155 100644
 --- a/src/main/java/me/cortex/voxy/common/world/SaveLoadSystem3.java
 +++ b/src/main/java/me/cortex/voxy/common/world/SaveLoadSystem3.java
-@@ -69,7 +69,8 @@ public class SaveLoadSystem3 {
+@@ -69,7 +69,9 @@ public class SaveLoadSystem3 {
          long metadata = 0;
          metadata |= Integer.toUnsignedLong(LUT.size());//Bottom 2 bytes
          metadata |= Byte.toUnsignedLong(section.getNonEmptyChildren())<<16;//Next byte
 -        //5 bytes free
 +        metadata |= (section.hasCoarseContent()?1L:0L)<<24;
++        metadata |= (section.hasCompleteCoarseChildren()?1L:0L)<<25;
 +        //4 bytes free
  
          MemoryUtil.memPutLong(metadataPtr, metadata);
          //TODO: do hash
-@@ -89,6 +90,7 @@ public class SaveLoadSystem3 {
+@@ -89,6 +91,8 @@ public class SaveLoadSystem3 {
  
          final long metadata = MemoryUtil.memGetLong(ptr); ptr += 8;
          section.nonEmptyChildren = (byte) ((metadata>>>16)&0xFF);
 +        section.coarseContent = ((metadata>>>24)&1L) != 0;
++        section.coarseChildrenComplete = ((metadata>>>25)&1L) != 0;
          final long lutBasePtr = ptr + WorldSection.SECTION_VOLUME * 2;
  
          final var blockData = section.data;
 diff --git a/src/main/java/me/cortex/voxy/common/world/WorldSection.java b/src/main/java/me/cortex/voxy/common/world/WorldSection.java
-index c4a82828a214a0006df1a4b6b7e5d0524a15c2d5..0b56baed1db02d464555d5c8aa115aa38a713dd8 100644
+index c4a82828..b2d3f3c2 100644
 --- a/src/main/java/me/cortex/voxy/common/world/WorldSection.java
 +++ b/src/main/java/me/cortex/voxy/common/world/WorldSection.java
-@@ -19,6 +19,7 @@ public final class WorldSection {
+@@ -19,6 +19,8 @@ public final class WorldSection {
      static final VarHandle ATOMIC_STATE_HANDLE;
      private static final VarHandle NON_EMPTY_CHILD_HANDLE;
      private static final VarHandle NON_EMPTY_BLOCK_HANDLE;
 +    private static final VarHandle COARSE_CONTENT_HANDLE;
++    private static final VarHandle COARSE_CHILDREN_COMPLETE_HANDLE;
      private static final VarHandle IN_SAVE_QUEUE_HANDLE;
      private static final VarHandle IS_DIRTY_HANDLE;
  
-@@ -27,6 +28,7 @@ public final class WorldSection {
+@@ -27,6 +29,8 @@ public final class WorldSection {
              ATOMIC_STATE_HANDLE = MethodHandles.lookup().findVarHandle(WorldSection.class, "atomicState", int.class);
              NON_EMPTY_CHILD_HANDLE = MethodHandles.lookup().findVarHandle(WorldSection.class, "nonEmptyChildren", byte.class);
              NON_EMPTY_BLOCK_HANDLE = MethodHandles.lookup().findVarHandle(WorldSection.class, "nonEmptyBlockCount", int.class);
 +            COARSE_CONTENT_HANDLE = MethodHandles.lookup().findVarHandle(WorldSection.class, "coarseContent", boolean.class);
++            COARSE_CHILDREN_COMPLETE_HANDLE = MethodHandles.lookup().findVarHandle(WorldSection.class, "coarseChildrenComplete", boolean.class);
              IN_SAVE_QUEUE_HANDLE = MethodHandles.lookup().findVarHandle(WorldSection.class, "inSaveQueue", boolean.class);
              IS_DIRTY_HANDLE = MethodHandles.lookup().findVarHandle(WorldSection.class, "isDirty", boolean.class);
          } catch (NoSuchFieldException | IllegalAccessException e) {
-@@ -54,6 +56,11 @@ public final class WorldSection {
+@@ -54,6 +58,16 @@ public final class WorldSection {
      long[] data = null;
      volatile int nonEmptyBlockCount = 0;//Note: only needed for level 0 sections
      volatile byte nonEmptyChildren;
@@ -1516,10 +1520,15 @@ index c4a82828a214a0006df1a4b6b7e5d0524a15c2d5..0b56baed1db02d464555d5c8aa115aa3
 +    // mask so the renderer can use the section as a leaf while its parent still
 +    // knows that this child exists.
 +    volatile boolean coarseContent;
++    // True once every non-air octant of directly generated coarse content has
++    // a materialized child. Voxy treats a missing child bit as guaranteed air,
++    // so publishing only the child currently being refined creates rectangular
++    // holes where its siblings should have inherited the coarse fallback.
++    volatile boolean coarseChildrenComplete;
  
      final ActiveSectionTracker tracker;
      volatile boolean inSaveQueue;
-@@ -246,7 +253,7 @@ public final class WorldSection {
+@@ -246,7 +260,7 @@ public final class WorldSection {
          byte prev, next;
          do {
              prev = this.getNonEmptyChildren();
@@ -1528,7 +1537,7 @@ index c4a82828a214a0006df1a4b6b7e5d0524a15c2d5..0b56baed1db02d464555d5c8aa115aa3
          } while (!NON_EMPTY_CHILD_HANDLE.compareAndSet(this, prev, next));
  
          return ((prev!=0)^(next!=0))?2:(prev!=next?1:0);
-@@ -280,6 +287,21 @@ public final class WorldSection {
+@@ -280,6 +294,33 @@ public final class WorldSection {
          return prev != next;
      }
  
@@ -1538,6 +1547,18 @@ index c4a82828a214a0006df1a4b6b7e5d0524a15c2d5..0b56baed1db02d464555d5c8aa115aa3
 +
 +    public boolean markCoarseContent() {
 +        return !(boolean) COARSE_CONTENT_HANDLE.getAndSet(this, true);
++    }
++
++    public boolean hasCompleteCoarseChildren() {
++        return (boolean) COARSE_CHILDREN_COMPLETE_HANDLE.get(this);
++    }
++
++    public boolean markCoarseChildrenComplete() {
++        return !(boolean) COARSE_CHILDREN_COMPLETE_HANDLE.getAndSet(this, true);
++    }
++
++    public boolean invalidateCoarseChildrenComplete() {
++        return (boolean) COARSE_CHILDREN_COMPLETE_HANDLE.getAndSet(this, false);
 +    }
 +
 +    public boolean isPresent() {
@@ -1550,7 +1571,7 @@ index c4a82828a214a0006df1a4b6b7e5d0524a15c2d5..0b56baed1db02d464555d5c8aa115aa3
      public void _unsafeSetNonEmptyChildren(byte nonEmptyChildren) {
          NON_EMPTY_CHILD_HANDLE.set(this, nonEmptyChildren);
      }
-@@ -309,4 +331,4 @@ public final class WorldSection {
+@@ -309,4 +350,4 @@ public final class WorldSection {
      public boolean isFreed() {
          return (((int)ATOMIC_STATE_HANDLE.get(this))&1)==0;
      }
@@ -1558,7 +1579,7 @@ index c4a82828a214a0006df1a4b6b7e5d0524a15c2d5..0b56baed1db02d464555d5c8aa115aa3
 \ No newline at end of file
 +}
 diff --git a/src/main/java/me/cortex/voxy/common/world/WorldUpdater.java b/src/main/java/me/cortex/voxy/common/world/WorldUpdater.java
-index 1ab705b92f2ba5c6dd15f5b0326d8cfd651433ca..8af8be31cb40e672d756a20b9c0c3007c8aec41c 100644
+index 1ab705b9..03b6ffec 100644
 --- a/src/main/java/me/cortex/voxy/common/world/WorldUpdater.java
 +++ b/src/main/java/me/cortex/voxy/common/world/WorldUpdater.java
 @@ -1,7 +1,12 @@
@@ -1585,7 +1606,7 @@ index 1ab705b92f2ba5c6dd15f5b0326d8cfd651433ca..8af8be31cb40e672d756a20b9c0c3007
          boolean shouldCheckEmptiness = false;
          WorldSection previousSection = null;
          for (int lvl = 0; lvl <= MAX_LOD_LAYER; lvl++) {
-@@ -89,6 +98,282 @@ public class WorldUpdater {
+@@ -89,6 +98,388 @@ public class WorldUpdater {
          }
      }
  
@@ -1669,6 +1690,7 @@ index 1ab705b92f2ba5c6dd15f5b0326d8cfd651433ca..8af8be31cb40e672d756a20b9c0c3007
 +            WorldSection section = into.acquire(level, sectionX, sectionY, sectionZ);
 +            boolean changed = false;
 +            boolean containsNonAir = false;
++            boolean repairCoarseChildren = false;
 +            int neighborMask = 0;
 +            try {
 +                for (var cellEntry : patchEntry.getValue().int2LongEntrySet()) {
@@ -1701,6 +1723,11 @@ index 1ab705b92f2ba5c6dd15f5b0326d8cfd651433ca..8af8be31cb40e672d756a20b9c0c3007
 +                }
 +                boolean presenceChanged = directCoarseContent && containsNonAir
 +                        && section.markCoarseContent();
++                if (changed && section.hasCoarseContent()) {
++                    section.invalidateCoarseChildrenComplete();
++                }
++                repairCoarseChildren = directCoarseContent && section.hasCoarseContent()
++                        && section.getNonEmptyChildren() != 0;
 +                if (changed || presenceChanged) {
 +                    int flags = changed ? UPDATE_TYPE_BLOCK_BIT : 0;
 +                    into.markDirty(section, flags, neighborMask);
@@ -1709,6 +1736,16 @@ index 1ab705b92f2ba5c6dd15f5b0326d8cfd651433ca..8af8be31cb40e672d756a20b9c0c3007
 +                }
 +            } finally {
 +                section.release();
++            }
++            if (repairCoarseChildren) {
++                WorldSection coarseSection = into.acquireIfExists(sectionKey);
++                if (coarseSection != null) {
++                    try {
++                        ensureCoarseChildCoverage(into, coarseSection);
++                    } finally {
++                        coarseSection.release();
++                    }
++                }
 +            }
 +        }
 +        return new WriteResult(changedCellSet, changedSections);
@@ -1783,12 +1820,6 @@ index 1ab705b92f2ba5c6dd15f5b0326d8cfd651433ca..8af8be31cb40e672d756a20b9c0c3007
 +
 +    private static void ensureRefinementBackground(WorldEngine into, int level,
 +                                                   int sectionX, int sectionY, int sectionZ) {
-+        WorldSection existing = into.acquireIfExists(level, sectionX, sectionY, sectionZ);
-+        if (existing != null) {
-+            boolean present = existing.isPresent();
-+            existing.release();
-+            if (present) return;
-+        }
 +        if (level >= MAX_LOD_LAYER) return;
 +
 +        int parentX = sectionX >> 1;
@@ -1796,52 +1827,148 @@ index 1ab705b92f2ba5c6dd15f5b0326d8cfd651433ca..8af8be31cb40e672d756a20b9c0c3007
 +        int parentZ = sectionZ >> 1;
 +        ensureRefinementBackground(into, level + 1, parentX, parentY, parentZ);
 +        WorldSection parent = into.acquireIfExists(level + 1, parentX, parentY, parentZ);
-+        if (parent == null || !parent.hasCoarseContent()) {
-+            if (parent != null) parent.release();
++        if (parent == null) {
 +            return;
 +        }
 +
-+        WorldSection child = into.acquire(level, sectionX, sectionY, sectionZ);
-+        boolean materialized = false;
 +        try {
-+            synchronized (child) {
-+                if (!child.isPresent()) {
-+                    int parentBaseX = (sectionX & 1) << 4;
-+                    int parentBaseY = (sectionY & 1) << 4;
-+                    int parentBaseZ = (sectionZ & 1) << 4;
-+                    int nonAir = 0;
-+                    for (int y = 0; y < 32; y++) {
-+                        for (int z = 0; z < 32; z++) {
-+                            for (int x = 0; x < 32; x++) {
-+                                long id = parent.data[WorldSection.getIndex(
-+                                        parentBaseX + (x >> 1),
-+                                        parentBaseY + (y >> 1),
-+                                        parentBaseZ + (z >> 1))];
-+                                child.data[WorldSection.getIndex(x, y, z)] = id;
-+                                nonAir += Mapper.isAir(id) ? 0 : 1;
-+                            }
-+                        }
-+                    }
-+                    if (level == 0) {
-+                        child.nonEmptyBlockCount = nonAir;
-+                        child.updateLvl0State();
-+                    } else if (nonAir != 0) {
-+                        child.markCoarseContent();
-+                    }
-+                    materialized = nonAir != 0;
-+                }
-+            }
-+            if (materialized) {
-+                into.markDirty(child, UPDATE_TYPE_BLOCK_BIT, 0x3F);
-+                int state = parent.updateEmptyChildState(child);
-+                if (state != 0) {
-+                    into.markDirty(parent, UPDATE_TYPE_CHILD_EXISTENCE_BIT, 0);
-+                }
-+            }
++            ensureCoarseChildCoverage(into, parent);
 +        } finally {
-+            child.release();
 +            parent.release();
 +        }
++    }
++
++    /**
++     * Expands every non-air octant of a coarse leaf before its child mask is
++     * exposed. Inner nodes do not render their own geometry, and Voxy assumes
++     * every missing child is entirely air, so materializing only one requested
++     * child turns all of its non-empty siblings into holes.
++     */
++    private static void ensureCoarseChildCoverage(WorldEngine into, WorldSection parent) {
++        if (parent.lvl <= 0 || !parent.hasCoarseContent()
++                || parent.hasCompleteCoarseChildren()) {
++            return;
++        }
++
++        synchronized (parent) {
++            if (!parent.hasCoarseContent() || parent.hasCompleteCoarseChildren()) {
++                return;
++            }
++
++            boolean parentMaskChanged = false;
++            for (int childIndex = 0; childIndex < 8; childIndex++) {
++                int childX = (parent.x << 1) | (childIndex & 1);
++                int childY = (parent.y << 1) | ((childIndex >> 2) & 1);
++                int childZ = (parent.z << 1) | ((childIndex >> 1) & 1);
++                int parentBaseX = (childIndex & 1) << 4;
++                int parentBaseY = ((childIndex >> 2) & 1) << 4;
++                int parentBaseZ = ((childIndex >> 1) & 1) << 4;
++
++                if (!parentOctantHasNonAir(parent, parentBaseX, parentBaseY, parentBaseZ)) {
++                    continue;
++                }
++
++                WorldSection child = into.acquire(parent.lvl - 1, childX, childY, childZ);
++                boolean childDataChanged;
++                boolean childPresenceChanged = false;
++                try {
++                    synchronized (child) {
++                        childDataChanged = materializeChildFallback(parent, child,
++                                parentBaseX, parentBaseY, parentBaseZ);
++                        int nonAir = countNonAir(child.data);
++                        if (child.lvl == 0) {
++                            int oldNonAir = child.getNonEmptyBlockCount();
++                            if (oldNonAir != nonAir) {
++                                child.nonEmptyBlockCount = nonAir;
++                                childPresenceChanged = child.updateLvl0State();
++                            }
++                        } else if (nonAir != 0) {
++                            childPresenceChanged = child.markCoarseContent();
++                        }
++                    }
++
++                    if (childDataChanged || childPresenceChanged) {
++                        into.markDirty(child, childDataChanged ? UPDATE_TYPE_BLOCK_BIT : 0,
++                                childDataChanged ? 0x3F : 0);
++                    }
++
++                int state = parent.updateEmptyChildState(child);
++                if (state != 0) {
++                        parentMaskChanged = true;
++                    }
++                } finally {
++                    child.release();
++                }
++            }
++
++            boolean completionChanged = parent.markCoarseChildrenComplete();
++            if (parentMaskChanged || completionChanged) {
++                into.markDirty(parent,
++                        parentMaskChanged ? UPDATE_TYPE_CHILD_EXISTENCE_BIT : 0, 0);
++            }
++        }
++    }
++
++    private static boolean parentOctantHasNonAir(WorldSection parent,
++                                                  int baseX, int baseY, int baseZ) {
++        for (int y = 0; y < 16; y++) {
++            for (int z = 0; z < 16; z++) {
++                int index = WorldSection.getIndex(baseX, baseY + y, baseZ + z);
++                for (int x = 0; x < 16; x++) {
++                    if (!Mapper.isAir(parent.data[index + x])) {
++                        return true;
++                    }
++                }
++            }
++        }
++        return false;
++    }
++
++    private static boolean materializeChildFallback(WorldSection parent, WorldSection child,
++                                                     int parentBaseX, int parentBaseY,
++                                                     int parentBaseZ) {
++        boolean changed = false;
++        int existingGrandchildren = child.lvl == 0 ? 0
++                : Byte.toUnsignedInt(child.getNonEmptyChildren());
++        for (int y = 0; y < 32; y++) {
++            for (int z = 0; z < 32; z++) {
++                for (int x = 0; x < 32; x++) {
++                    int childIndex = WorldSection.getIndex(x, y, z);
++                    long oldId = child.data[childIndex];
++
++                    if (child.lvl > 0) {
++                        int grandchild = WorldSection.getChildIndex(x >> 4, y >> 4, z >> 4);
++                        if ((existingGrandchildren & (1 << grandchild)) != 0) {
++                            continue;
++                        }
++                    }
++
++                    long inheritedId = parent.data[WorldSection.getIndex(
++                            parentBaseX + (x >> 1), parentBaseY + (y >> 1),
++                            parentBaseZ + (z >> 1))];
++                    // At level 0, preserve real or already predicted terrain and
++                    // only backfill its missing volume. Higher levels can replace
++                    // uncovered octants wholesale because covered octants were
++                    // skipped above and remain authoritative mips of their child.
++                    if (child.lvl == 0 && !Mapper.isAir(oldId)) {
++                        continue;
++                    }
++                    if (oldId != inheritedId) {
++                        child.data[childIndex] = inheritedId;
++                        changed = true;
++                    }
++                }
++            }
++        }
++        return changed;
++    }
++
++    private static int countNonAir(long[] data) {
++        int nonAir = 0;
++        for (long id : data) {
++            nonAir += Mapper.isAir(id) ? 0 : 1;
++        }
++        return nonAir;
 +    }
 +
 +    private static long packCell(int x, int y, int z) {
@@ -1869,7 +1996,7 @@ index 1ab705b92f2ba5c6dd15f5b0326d8cfd651433ca..8af8be31cb40e672d756a20b9c0c3007
      private static long insertSectionLvlIntoWorld(VoxelizedSection section, WorldSection worldSection) {
          final long[] vdat = section.section;
 diff --git a/src/main/resources/assets/voxy/lang/en_us.json b/src/main/resources/assets/voxy/lang/en_us.json
-index 08d1299be583fca45559a359469e8ba239d9a52e..503fb99893b54ed69dde38bee5dfba72caf4ccb7 100644
+index 08d1299b..503fb998 100644
 --- a/src/main/resources/assets/voxy/lang/en_us.json
 +++ b/src/main/resources/assets/voxy/lang/en_us.json
 @@ -3,6 +3,7 @@

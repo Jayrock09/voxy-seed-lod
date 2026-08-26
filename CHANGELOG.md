@@ -1,6 +1,15 @@
 # Changelog
 
-## seedlod.14: current patch
+## seedlod.15: current patch
+
+- Fixed the remaining large rectangular holes caused by partial hierarchy refinement.
+- Materializes every non-air sibling covered by a coarse parent before publishing its finer-child mask. Voxy can therefore keep its guarantee that every missing child is actually empty.
+- Added a persistent coarse-child completion flag so sibling expansion runs once per coarse section instead of being repeated for every generated chunk.
+- Repairs incomplete sibling coverage saved by seedlod.12 through seedlod.14 as the normal generation wave touches those sections. Existing worlds should not require a Voxy-cache reset.
+- Preserves existing finer child octants while expanding fallback data into uncovered octants.
+- Backfills missing level-0 volume without replacing existing non-air real terrain, allowing ordinary loaded chunks to remain authoritative.
+
+## seedlod.14
 
 - Fixed the remaining persistent rectangular gaps at screen-space quality transitions.
 - Stopped leaving parent fallback cells empty merely because a finer child exists. Voxy can now select either parent or child geometry without exposing an unpopulated rectangle.
