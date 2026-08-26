@@ -79,6 +79,14 @@ This project is unofficial, unsupported by MCRcortex, and not affiliated with Mo
 - The run finishes early if the requested horizon completes. For comparable Vanilla, Tectonic, or Terralith results, use the same seed, position, settings, empty prediction cache, and duration in a separate world load.
 - Scheduled chunk-area is an area-throughput metric. Refinement can cover the same area more than once at progressively finer quality, so it is not a count of unique Minecraft chunks loaded.
 
+### Generator and datapack fingerprinting
+
+- Each local world receives a small `seedlod-fingerprint.properties` sidecar beside its Voxy world storage.
+- The fingerprint covers the seed, Seed LOD prediction schema, generator and biome-source types, serialized generator settings, sea level, world height, and deterministic terrain, biome, and surface probes.
+- If the fingerprint changes, Seed LOD reports it in chat and regenerates the configured horizon through the normal nearest-first wave. Existing marked predictions are replaceable, while unmarked real chunks remain authoritative and are never cleared by this process.
+- Predictions outside the currently configured horizon are refreshed when that horizon is extended or the player moves into range.
+- The debug HUD and benchmark report show the first eight fingerprint characters so results from different datapack or generator configurations are easy to distinguish.
+
 ### Terrain quality
 
 - Optional adaptive sampling starts at the configured minimum and progressively increases through power-of-two bands toward the configured horizon maximum.

@@ -1,6 +1,17 @@
 # Changelog
 
-## seedlod.17: current patch
+## seedlod.18: current patch
+
+- Added a generator and datapack fingerprint sidecar for each Voxy world identifier.
+- The fingerprint includes the world seed, prediction schema, generator and biome-source classes, generator codec data, sea level, vertical range, and deterministic terrain, biome, and surface probes spread across the world.
+- Seed prediction IDs now carry a compact fingerprint tag in Voxy's unused low bits while retaining bit zero as the authoritative prediction marker.
+- Detects generator, seed, datapack, noise-setting, biome-source, and Seed LOD prediction-schema changes on world binding.
+- Warns in chat when terrain settings changed and allows the normal generation wave to refresh marked predictions. Real unmarked Voxy chunks remain protected.
+- Initializes a versioned atomic metadata file for older caches and fresh worlds. Metadata writes use a temporary file and atomic replacement where supported.
+- Added the active fingerprint prefix to the debug HUD and benchmark generator label, making reports traceable to a specific terrain configuration.
+- Added three automated tests for unambiguous component hashing, new/matching/changed metadata states, and safe low-bit prediction tags. The full suite now contains fourteen tests.
+
+## seedlod.17
 
 - Added `/voxy seedlod benchmark` for a 30-second live generation benchmark and `/voxy seedlod benchmark <seconds>` for runs from 5 to 300 seconds.
 - Reports the active chunk-generator class, generator samples per second, CPU time per sample, run-local sample-cache hit rate, generated cells and sections per second, queue latency, jobs, failures, cancellations, memory change, and run-local peak pending work.

@@ -30,7 +30,7 @@ index 66ee48a1..b9b2efc5 100644
 \ No newline at end of file
 +}*/
 diff --git a/gradle.properties b/gradle.properties
-index a25ea295..d251d6d0 100644
+index a25ea295..b1030e59 100644
 --- a/gradle.properties
 +++ b/gradle.properties
 @@ -29,6 +29,6 @@ nvidium_version=0.4.3-beta13-26.1
@@ -38,7 +38,7 @@ index a25ea295..d251d6d0 100644
  
  # Mod Properties
 -mod_version = 0.2.19-beta
-+mod_version = 0.2.19-beta-seedlod.17
++mod_version = 0.2.19-beta-seedlod.18
  maven_group = me.cortex
 -archives_base_name = voxy
 \ No newline at end of file
@@ -83,7 +83,7 @@ index c0029a7d..b5b89301 100644
 \ No newline at end of file
 +}
 diff --git a/src/main/java/me/cortex/voxy/client/VoxyClientInstance.java b/src/main/java/me/cortex/voxy/client/VoxyClientInstance.java
-index 2dab3784..5b78624a 100644
+index 2dab3784..2319b4d3 100644
 --- a/src/main/java/me/cortex/voxy/client/VoxyClientInstance.java
 +++ b/src/main/java/me/cortex/voxy/client/VoxyClientInstance.java
 @@ -4,6 +4,7 @@ import me.cortex.voxy.client.compat.FlashbackCompat;
@@ -106,7 +106,7 @@ index 2dab3784..5b78624a 100644
              this.config = StorageConfigUtil.getCreateStorageConfig(Config.class, c->c.version==1&&c.sectionStorageConfig!=null, ()->DEFAULT_STORAGE_CONFIG, basePath);
          }
          super();
-+        this.seedLodManager = new SeedLodManager();
++        this.seedLodManager = new SeedLodManager(this.basePath);
          this.updateDedicatedThreads();
      }
  
@@ -337,12 +337,13 @@ index d456e55c..f779c2e7 100644
                                  new BoolOption(
 diff --git a/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java
 new file mode 100644
-index 00000000..48ed6570
+index 00000000..4b02a739
 --- /dev/null
 +++ b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java
-@@ -0,0 +1,1438 @@
+@@ -0,0 +1,1512 @@
 +package me.cortex.voxy.client.seedlod;
 +
++import com.mojang.serialization.JsonOps;
 +import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 +import me.cortex.voxy.client.config.VoxyConfig;
 +import me.cortex.voxy.common.Logger;
@@ -358,6 +359,7 @@ index 00000000..48ed6570
 +import net.minecraft.core.Holder;
 +import net.minecraft.core.QuartPos;
 +import net.minecraft.resources.ResourceKey;
++import net.minecraft.resources.RegistryOps;
 +import net.minecraft.server.level.ServerLevel;
 +import net.minecraft.tags.BiomeTags;
 +import net.minecraft.world.level.Level;
@@ -376,6 +378,7 @@ index 00000000..48ed6570
 +import java.util.List;
 +import java.util.Locale;
 +import java.util.Set;
++import java.nio.file.Path;
 +import java.util.concurrent.ConcurrentHashMap;
 +import java.util.concurrent.PriorityBlockingQueue;
 +import java.util.concurrent.RejectedExecutionException;
@@ -405,6 +408,7 @@ index 00000000..48ed6570
 +    private static final long PREDICTION_MARKER = 1L;
 +
 +    private final ThreadPoolExecutor executor;
++    private final Path storageBasePath;
 +    private final AtomicInteger pendingTasks = new AtomicInteger();
 +    private final AtomicLong taskSequence = new AtomicLong();
 +    private final Set<WorkKey> runningWork = ConcurrentHashMap.newKeySet();
@@ -436,7 +440,8 @@ index 00000000..48ed6570
 +    private boolean scannedNSizedGeneration;
 +    private boolean stopped;
 +
-+    public SeedLodManager() {
++    public SeedLodManager(Path storageBasePath) {
++        this.storageBasePath = storageBasePath;
 +        int threads = Math.max(1, VoxyConfig.CONFIG.seedLodThreads);
 +        AtomicInteger threadNumber = new AtomicInteger();
 +        ThreadFactory factory = runnable -> {
@@ -477,6 +482,21 @@ index 00000000..48ed6570
 +            var chunkSource = serverLevel.getChunkSource();
 +            current = new Binding(serverLevel, world, chunkSource.getGenerator(), chunkSource.randomState(),
 +                    serverLevel.getSeed(), this.metrics = new SeedLodMetrics());
++            Path fingerprintFile = this.storageBasePath.resolve(identifier.getWorldId())
++                    .resolve("seedlod-fingerprint.properties");
++            try {
++                var check = SeedLodFingerprintStore.checkAndUpdate(fingerprintFile,
++                        current.generatorFingerprint, current.generator.getClass().getName());
++                if (check.state() == SeedLodFingerprintStore.State.MISMATCH) {
++                    client.gui.chatListener().handleSystemMessage(Component.literal(
++                            "Seed LOD terrain settings changed. Existing predictions will be regenerated; real Voxy chunks are untouched"), false);
++                } else if (check.state() == SeedLodFingerprintStore.State.NEW) {
++                    client.gui.chatListener().handleSystemMessage(Component.literal(
++                            "Seed LOD generator fingerprint initialized. Older predictions, if present, will be refreshed"), false);
++                }
++            } catch (Exception exception) {
++                Logger.error("Could not read or update the Seed LOD generator fingerprint", exception);
++            }
 +            this.binding = current;
 +            this.plannedWork.clear();
 +            this.completedWork.clear();
@@ -1441,11 +1461,12 @@ index 00000000..48ed6570
 +                                     BlockState state, Holder<Biome> biome) {
 +        MappingKey key = new MappingKey(state, biomeId(biome));
 +        return binding.predictionIds.computeIfAbsent(key,
-+                ignored -> prediction(mapper.getBaseId((byte) 15, state, biome)));
++                ignored -> prediction(mapper.getBaseId((byte) 15, state, biome),
++                        binding.predictionMarker));
 +    }
 +
-+    private static long prediction(long id) {
-+        return id | PREDICTION_MARKER;
++    private static long prediction(long id, long predictionMarker) {
++        return id | predictionMarker;
 +    }
 +
 +    private static VoxelizedSection createLitSection(int chunkX, int sectionY, int chunkZ) {
@@ -1623,7 +1644,8 @@ index 00000000..48ed6570
 +                Math.max(0L, WorldUpdater.getSeedLodHierarchyRepairs() - repairBaseline),
 +                Math.max(0L, WorldUpdater.getSeedLodMaterializedChildren() - childBaseline),
 +                Math.max(0L, WorldUpdater.getSeedLodRealReplacementSections() - replacementSectionBaseline),
-+                Math.max(0L, WorldUpdater.getSeedLodRealReplacementVoxels() - replacementVoxelBaseline));
++                Math.max(0L, WorldUpdater.getSeedLodRealReplacementVoxels() - replacementVoxelBaseline),
++                current == null ? "none" : current.generatorFingerprint.substring(0, 8));
 +        return this.metrics.snapshot(state);
 +    }
 +
@@ -1640,7 +1662,8 @@ index 00000000..48ed6570
 +        }
 +        int duration = Math.max(5, Math.min(300, seconds));
 +        long memory = this.debugSnapshot().runtime().estimatedMemoryBytes();
-+        String generator = current.generator.getClass().getSimpleName();
++        String generator = current.generator.getClass().getSimpleName() + " ["
++                + current.generatorFingerprint.substring(0, 8) + "]";
 +        this.benchmark = new BenchmarkSession(current, current.metrics.totals(),
 +                memory, (long) duration * 1_000_000_000L, generator,
 +                new AtomicInteger(this.pendingTasks.get()));
@@ -1706,6 +1729,52 @@ index 00000000..48ed6570
 +        return result;
 +    }
 +
++    private static String generatorFingerprint(Binding binding) {
++        List<String> components = new ArrayList<>();
++        components.add("seedlod-prediction-version=" + SeedLodFingerprintStore.PREDICTION_VERSION);
++        components.add("seed=" + binding.seed);
++        components.add("generator=" + binding.generator.getClass().getName());
++        components.add("biomeSource=" + binding.generator.getBiomeSource().getClass().getName());
++        components.add("seaLevel=" + binding.generator.getSeaLevel());
++        components.add("minY=" + binding.generator.getMinY());
++        components.add("depth=" + binding.generator.getGenDepth());
++        try {
++            var ops = RegistryOps.create(JsonOps.INSTANCE, binding.level.registryAccess());
++            ChunkGenerator.CODEC.encodeStart(ops, binding.generator).result()
++                    .ifPresent(json -> components.add("codec=" + json));
++        } catch (Throwable throwable) {
++            components.add("codecError=" + throwable.getClass().getName());
++        }
++
++        int minY = binding.level.getMinY();
++        int maxY = binding.level.getMaxY();
++        for (int index = 0; index < 16; index++) {
++            long mixedX = mix64(0x6A09E667F3BCC909L + index * 0x9E3779B97F4A7C15L);
++            long mixedZ = mix64(0xBB67AE8584CAA73BL + index * 0xC2B2AE3D27D4EB4FL);
++            int x = (int) Math.floorMod(mixedX, 2_000_001L) - 1_000_000;
++            int z = (int) Math.floorMod(mixedZ, 2_000_001L) - 1_000_000;
++            try {
++                int floorY = binding.generator.getBaseHeight(x, z,
++                        Heightmap.Types.OCEAN_FLOOR_WG, binding.level, binding.randomState) - 1;
++                Holder<Biome> biome = binding.generator.getBiomeSource().getNoiseBiome(
++                        QuartPos.fromBlock(x), QuartPos.fromBlock(Math.max(minY, floorY)),
++                        QuartPos.fromBlock(z), binding.randomState.sampler());
++                StringBuilder sample = new StringBuilder().append(x).append(',').append(z)
++                        .append('=').append(floorY).append(',').append(biomeId(biome));
++                if (index < 8) {
++                    NoiseColumn column = binding.generator.getBaseColumn(
++                            x, z, binding.level, binding.randomState);
++                    int surfaceY = Math.max(minY, Math.min(maxY - 1, floorY));
++                    sample.append(',').append(column.getBlock(surfaceY));
++                }
++                components.add(sample.toString());
++            } catch (Throwable throwable) {
++                components.add(x + "," + z + "=error:" + throwable.getClass().getName());
++            }
++        }
++        return SeedLodFingerprintStore.hashComponents(components);
++    }
++
 +    private static final class Binding {
 +        final ServerLevel level;
 +        final WorldEngine world;
@@ -1713,6 +1782,8 @@ index 00000000..48ed6570
 +        final RandomState randomState;
 +        final long seed;
 +        final boolean fastHeightSampling;
++        final String generatorFingerprint;
++        final long predictionMarker;
 +        final SeedLodMetrics metrics;
 +        final long hierarchyRepairBaseline;
 +        final long hierarchyChildBaseline;
@@ -1732,6 +1803,9 @@ index 00000000..48ed6570
 +            this.seed = seed;
 +            this.metrics = metrics;
 +            this.fastHeightSampling = generator instanceof NoiseBasedChunkGenerator;
++            this.generatorFingerprint = SeedLodManager.generatorFingerprint(this);
++            this.predictionMarker = SeedLodFingerprintStore.predictionMarker(
++                    this.generatorFingerprint);
 +            this.hierarchyRepairBaseline = WorldUpdater.getSeedLodHierarchyRepairs();
 +            this.hierarchyChildBaseline = WorldUpdater.getSeedLodMaterializedChildren();
 +            this.realReplacementSectionBaseline = WorldUpdater.getSeedLodRealReplacementSections();
