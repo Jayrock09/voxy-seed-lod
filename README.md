@@ -71,6 +71,14 @@ This project is unofficial, unsupported by MCRcortex, and not affiliated with Mo
 - Nine automated tests exercise the hierarchy invariants that prevent rectangular holes. They include concurrent sibling publication, negative coordinates, old-cache repair, and save/reload of coarse hierarchy state.
 - Instrumentation uses worker-friendly adders and calculates rolling rates on the client thread. Both HUD options are disabled by default.
 
+### Generation benchmark
+
+- Run `/voxy seedlod benchmark` while Seed LOD is actively filling a new horizon. The default run is 30 seconds.
+- Use `/voxy seedlod benchmark <seconds>` for a 5 to 300 second measurement.
+- Results appear in chat and include the generator class, samples per second, CPU time per sample, run-local cache hit rate, scheduled chunk-area per second, cells and sections per second, queue latency, job outcomes, peak pending work, and estimated memory change.
+- The run finishes early if the requested horizon completes. For comparable Vanilla, Tectonic, or Terralith results, use the same seed, position, settings, empty prediction cache, and duration in a separate world load.
+- Scheduled chunk-area is an area-throughput metric. Refinement can cover the same area more than once at progressively finer quality, so it is not a count of unique Minecraft chunks loaded.
+
 ### Terrain quality
 
 - Optional adaptive sampling starts at the configured minimum and progressively increases through power-of-two bands toward the configured horizon maximum.

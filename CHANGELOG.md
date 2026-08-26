@@ -1,6 +1,16 @@
 # Changelog
 
-## seedlod.16: current patch
+## seedlod.17: current patch
+
+- Added `/voxy seedlod benchmark` for a 30-second live generation benchmark and `/voxy seedlod benchmark <seconds>` for runs from 5 to 300 seconds.
+- Reports the active chunk-generator class, generator samples per second, CPU time per sample, run-local sample-cache hit rate, generated cells and sections per second, queue latency, jobs, failures, cancellations, memory change, and run-local peak pending work.
+- Added scheduled chunk-area throughput so N-sized work can be compared fairly with level-0 four-by-four chunk tiles.
+- Benchmarks finish early when the requested horizon completes, preventing idle time from making a fast completed run appear slower.
+- Rejects benchmark starts when Seed LOD is inactive, another benchmark is running, or the current horizon has no work left.
+- Cancels a benchmark safely if the world or generator binding changes during the run.
+- Added two automated benchmark-math tests. The full suite now contains eleven tests.
+
+## seedlod.16
 
 - Added an optional live Seed LOD debug HUD with scheduling, throughput, cache, hierarchy, replacement, cancellation, latency, and estimated-memory counters.
 - Added an optional conceptual section-state map. Completed tiles are colored by Voxy output level, queued or running tiles are white, and missing tiles are dark.

@@ -30,7 +30,7 @@ index 66ee48a1..b9b2efc5 100644
 \ No newline at end of file
 +}*/
 diff --git a/gradle.properties b/gradle.properties
-index a25ea295..070960b3 100644
+index a25ea295..d251d6d0 100644
 --- a/gradle.properties
 +++ b/gradle.properties
 @@ -29,6 +29,6 @@ nvidium_version=0.4.3-beta13-26.1
@@ -38,7 +38,7 @@ index a25ea295..070960b3 100644
  
  # Mod Properties
 -mod_version = 0.2.19-beta
-+mod_version = 0.2.19-beta-seedlod.16
++mod_version = 0.2.19-beta-seedlod.17
  maven_group = me.cortex
 -archives_base_name = voxy
 \ No newline at end of file
@@ -130,10 +130,17 @@ index 2dab3784..5b78624a 100644
          //Free the render resources cache since the entire instance is freed
          RenderResourceReuse.clearResources();
 diff --git a/src/main/java/me/cortex/voxy/client/VoxyCommands.java b/src/main/java/me/cortex/voxy/client/VoxyCommands.java
-index a902a578..4569f774 100644
+index a902a578..9644f746 100644
 --- a/src/main/java/me/cortex/voxy/client/VoxyCommands.java
 +++ b/src/main/java/me/cortex/voxy/client/VoxyCommands.java
-@@ -7,6 +7,8 @@ import com.mojang.brigadier.context.CommandContext;
+@@ -1,12 +1,15 @@
+ package me.cortex.voxy.client;
+ 
+ import com.mojang.brigadier.arguments.BoolArgumentType;
++import com.mojang.brigadier.arguments.IntegerArgumentType;
+ import com.mojang.brigadier.arguments.StringArgumentType;
+ import com.mojang.brigadier.builder.LiteralArgumentBuilder;
+ import com.mojang.brigadier.context.CommandContext;
  import com.mojang.brigadier.suggestion.Suggestions;
  import com.mojang.brigadier.suggestion.SuggestionsBuilder;
  import me.cortex.voxy.client.core.IVoxyRenderSystemHolder;
@@ -142,7 +149,7 @@ index a902a578..4569f774 100644
  import me.cortex.voxy.common.DebugUtils;
  import me.cortex.voxy.commonImpl.VoxyCommon;
  import me.cortex.voxy.commonImpl.WorldIdentifier;
-@@ -67,13 +69,40 @@ public class VoxyCommands {
+@@ -67,13 +70,62 @@ public class VoxyCommands {
                                  .executes(ctx->verifyTLNs(ctx, BoolArgumentType.getBool(ctx, "attemptRepair"))))
                  );
  
@@ -150,7 +157,12 @@ index a902a578..4569f774 100644
 +                .then(ClientCommands.literal("debug")
 +                        .executes(VoxyCommands::toggleSeedLodDebug))
 +                .then(ClientCommands.literal("stats")
-+                        .executes(VoxyCommands::showSeedLodStats));
++                        .executes(VoxyCommands::showSeedLodStats))
++                .then(ClientCommands.literal("benchmark")
++                        .executes(ctx -> startSeedLodBenchmark(ctx, 30))
++                        .then(ClientCommands.argument("seconds", IntegerArgumentType.integer(5, 300))
++                                .executes(ctx -> startSeedLodBenchmark(ctx,
++                                        IntegerArgumentType.getInteger(ctx, "seconds")))));
 +
          return ClientCommands.literal("voxy")//.requires((ctx)-> VoxyCommon.getInstance() != null)
                  .then(ClientCommands.literal("reload")
@@ -180,10 +192,27 @@ index a902a578..4569f774 100644
 +        return 1;
 +    }
 +
++    private static int startSeedLodBenchmark(CommandContext<FabricClientCommandSource> ctx,
++                                             int seconds) {
++        var instance = VoxyCommon.getInstance();
++        if (!(instance instanceof VoxyClientInstance clientInstance)) {
++            ctx.getSource().sendError(Component.literal("Voxy is not active"));
++            return 0;
++        }
++        String error = clientInstance.getSeedLodManager().startBenchmark(seconds);
++        if (error != null) {
++            ctx.getSource().sendError(Component.literal(error));
++            return 0;
++        }
++        ctx.getSource().sendFeedback(Component.literal("Seed LOD benchmark started for "
++                + seconds + " seconds. Results will appear in chat"));
++        return 1;
++    }
++
      private static int reloadInstance(CommandContext<FabricClientCommandSource> ctx) {
          var instance = (VoxyClientInstance)VoxyCommon.getInstance();
          if (instance == null) {
-@@ -316,4 +345,4 @@ public class VoxyCommands {
+@@ -316,4 +368,4 @@ public class VoxyCommands {
          }
          return 1;
      }
@@ -308,10 +337,10 @@ index d456e55c..f779c2e7 100644
                                  new BoolOption(
 diff --git a/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java
 new file mode 100644
-index 00000000..a3ee0731
+index 00000000..48ed6570
 --- /dev/null
 +++ b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java
-@@ -0,0 +1,1376 @@
+@@ -0,0 +1,1438 @@
 +package me.cortex.voxy.client.seedlod;
 +
 +import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
@@ -325,6 +354,7 @@ index 00000000..a3ee0731
 +import me.cortex.voxy.common.world.other.Mapper;
 +import me.cortex.voxy.commonImpl.WorldIdentifier;
 +import net.minecraft.client.Minecraft;
++import net.minecraft.network.chat.Component;
 +import net.minecraft.core.Holder;
 +import net.minecraft.core.QuartPos;
 +import net.minecraft.resources.ResourceKey;
@@ -390,6 +420,8 @@ index 00000000..a3ee0731
 +    private volatile int playerChunkZ;
 +    private volatile long scanGeneration;
 +    private volatile long lastTeleportGeneration = Long.MIN_VALUE;
++    private volatile BenchmarkSession benchmark;
++    private volatile SeedLodBenchmark.Result lastBenchmark;
 +
 +    private int scanCenterX;
 +    private int scanCenterZ;
@@ -462,6 +494,7 @@ index 00000000..a3ee0731
 +        var playerChunk = client.player.chunkPosition();
 +        this.playerChunkX = playerChunk.x();
 +        this.playerChunkZ = playerChunk.z();
++        this.tickBenchmark(client);
 +
 +        int centerShift = Math.max(Math.abs(this.playerChunkX - this.scanCenterX),
 +                Math.abs(this.playerChunkZ - this.scanCenterZ));
@@ -507,6 +540,7 @@ index 00000000..a3ee0731
 +            this.scanGeneration++;
 +        }
 +        if (this.waveScanFinished) {
++            this.tickBenchmark(client);
 +            return;
 +        }
 +
@@ -569,6 +603,7 @@ index 00000000..a3ee0731
 +            this.waveRing++;
 +        }
 +        this.waveScanFinished = true;
++        this.tickBenchmark(client);
 +    }
 +
 +    private void submitWaveWork(Binding taskBinding, WorkKey key, TilePlan plan,
@@ -608,7 +643,8 @@ index 00000000..a3ee0731
 +                    }
 +                    if (completed) {
 +                        this.completedWork.merge(key, plan.stride, Math::min);
-+                        taskBinding.metrics.recordJobFinished();
++                        int workSize = workSizeChunks(key.outputLevel);
++                        taskBinding.metrics.recordJobFinished((long) workSize * workSize);
 +                    } else if (failed) {
 +                        taskBinding.metrics.recordJobFailed();
 +                    } else if (cancelled) {
@@ -1565,6 +1601,7 @@ index 00000000..a3ee0731
 +        this.plannedWork.clear();
 +        this.completedWork.clear();
 +        this.runningWork.clear();
++        this.benchmark = null;
 +    }
 +
 +    public SeedLodMetrics.Snapshot debugSnapshot() {
@@ -1588,6 +1625,57 @@ index 00000000..a3ee0731
 +                Math.max(0L, WorldUpdater.getSeedLodRealReplacementSections() - replacementSectionBaseline),
 +                Math.max(0L, WorldUpdater.getSeedLodRealReplacementVoxels() - replacementVoxelBaseline));
 +        return this.metrics.snapshot(state);
++    }
++
++    public synchronized String startBenchmark(int seconds) {
++        Binding current = this.binding;
++        if (current == null || this.stopped || !VoxyConfig.CONFIG.seedLodEnabled) {
++            return "Seed LOD must be active in a single-player Overworld";
++        }
++        if (this.benchmark != null) {
++            return "A Seed LOD benchmark is already running";
++        }
++        if (this.waveScanFinished && this.pendingTasks.get() == 0) {
++            return "No Seed LOD work is active. Increase the prediction distance or run this in a fresh area";
++        }
++        int duration = Math.max(5, Math.min(300, seconds));
++        long memory = this.debugSnapshot().runtime().estimatedMemoryBytes();
++        String generator = current.generator.getClass().getSimpleName();
++        this.benchmark = new BenchmarkSession(current, current.metrics.totals(),
++                memory, (long) duration * 1_000_000_000L, generator,
++                new AtomicInteger(this.pendingTasks.get()));
++        this.lastBenchmark = null;
++        return null;
++    }
++
++    public SeedLodBenchmark.Result lastBenchmark() {
++        return this.lastBenchmark;
++    }
++
++    private void tickBenchmark(Minecraft client) {
++        BenchmarkSession session = this.benchmark;
++        if (session == null) return;
++        if (this.binding != session.binding) {
++            this.benchmark = null;
++            client.gui.chatListener().handleSystemMessage(Component.literal(
++                    "Seed LOD benchmark cancelled because the world changed"), false);
++            return;
++        }
++        SeedLodMetrics.Totals totals = session.binding.metrics.totals();
++        session.peakPending.accumulateAndGet(this.pendingTasks.get(), Math::max);
++        long elapsed = totals.capturedNanos() - session.start.capturedNanos();
++        boolean horizonComplete = elapsed >= 1_000_000_000L
++                && this.waveScanFinished && this.pendingTasks.get() == 0;
++        if (elapsed < session.durationNanos && !horizonComplete) return;
++        long memory = this.debugSnapshot().runtime().estimatedMemoryBytes();
++        SeedLodBenchmark.Result result = SeedLodBenchmark.calculate(session.generator,
++                session.start, totals, session.startMemoryBytes, memory,
++                session.peakPending.get());
++        this.lastBenchmark = result;
++        this.benchmark = null;
++        for (String line : result.lines()) {
++            client.gui.chatListener().handleSystemMessage(Component.literal(line), false);
++        }
 +    }
 +
 +    public List<DebugCell> debugCells(int radiusTiles) {
@@ -1660,6 +1748,9 @@ index 00000000..a3ee0731
 +    private record WorkKey(int outputLevel, int x, int z) {}
 +    private record TilePlan(int stride, int outputLevel, int targetRadius,
 +                            int qualityDropoff, long generation, long enqueuedNanos) {}
++    private record BenchmarkSession(Binding binding, SeedLodMetrics.Totals start,
++                                    long startMemoryBytes, long durationNanos,
++                                    String generator, AtomicInteger peakPending) {}
 +    private record Sample(int surfaceY, int floorY, Holder<Biome> biome,
 +                          BlockState surfaceBlock, BlockState floorBlock) {
 +        boolean isOcean() {
