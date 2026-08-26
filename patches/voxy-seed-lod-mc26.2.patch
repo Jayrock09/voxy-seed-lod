@@ -350,6 +350,338 @@ index d456e55c..30310612 100644
                  new Page(Component.translatable("voxy.config.rendering"),
                          new Group(
                                  new BoolOption(
+diff --git a/src/main/java/me/cortex/voxy/client/seedlod/SeedLodAutoQuality.java b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodAutoQuality.java
+new file mode 100644
+index 00000000..0f2899ac
+--- /dev/null
++++ b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodAutoQuality.java
+@@ -0,0 +1,23 @@
++package me.cortex.voxy.client.seedlod;
++
++/** One-shot outer-quality recommendation with deliberately wide hysteresis. */
++public final class SeedLodAutoQuality {
++    private SeedLodAutoQuality() {}
++
++    public static int recommend(int currentMaximumStride,
++                                double projectedSeconds, int targetSeconds) {
++        int current = sanitize(currentMaximumStride);
++        double ratio = projectedSeconds / Math.max(1.0, targetSeconds);
++        if (ratio > 3.0) return 128;
++        if (ratio > 1.20) return Math.min(128, current << 1);
++        if (ratio < 0.40) return 32;
++        if (ratio < 0.70) return Math.max(32, current >> 1);
++        return current;
++    }
++
++    private static int sanitize(int stride) {
++        if (stride <= 32) return 32;
++        if (stride <= 64) return 64;
++        return 128;
++    }
++}
+diff --git a/src/main/java/me/cortex/voxy/client/seedlod/SeedLodBenchmark.java b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodBenchmark.java
+new file mode 100644
+index 00000000..9e5e4944
+--- /dev/null
++++ b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodBenchmark.java
+@@ -0,0 +1,59 @@
++package me.cortex.voxy.client.seedlod;
++
++import java.util.List;
++import java.util.Locale;
++
++/** Calculates a repeatable report from two low-contention metrics snapshots. */
++public final class SeedLodBenchmark {
++    private SeedLodBenchmark() {}
++
++    public static Result calculate(String generator, SeedLodMetrics.Totals start,
++                                   SeedLodMetrics.Totals end,
++                                   long startMemoryBytes, long endMemoryBytes,
++                                   int benchmarkPeakPending) {
++        double seconds = Math.max(0.001,
++                (end.capturedNanos() - start.capturedNanos()) / 1_000_000_000.0);
++        long samples = delta(end.generatorSamples(), start.generatorSamples());
++        long sampleNanos = delta(end.generatorSampleNanos(), start.generatorSampleNanos());
++        long cells = delta(end.cellsWritten(), start.cellsWritten());
++        long sections = delta(end.sectionsWritten(), start.sectionsWritten());
++        long hits = delta(end.cacheHits(), start.cacheHits());
++        long misses = delta(end.cacheMisses(), start.cacheMisses());
++        long started = delta(end.jobsStarted(), start.jobsStarted());
++        long finished = delta(end.jobsFinished(), start.jobsFinished());
++        long cancelled = delta(end.jobsCancelled(), start.jobsCancelled());
++        long failed = delta(end.jobsFailed(), start.jobsFailed());
++        long queueNanos = delta(end.queueLatencyNanos(), start.queueLatencyNanos());
++        long chunkArea = delta(end.chunkAreaFinished(), start.chunkAreaFinished());
++        return new Result(generator, seconds, samples / seconds,
++                chunkArea / seconds, cells / seconds, sections / seconds,
++                hits + misses == 0 ? 0.0 : hits * 100.0 / (hits + misses),
++                samples == 0 ? 0.0 : sampleNanos / 1_000.0 / samples,
++                started == 0 ? 0.0 : queueNanos / 1_000_000.0 / started,
++                started, finished, cancelled, failed, benchmarkPeakPending,
++                endMemoryBytes, endMemoryBytes - startMemoryBytes);
++    }
++
++    private static long delta(long end, long start) {
++        return Math.max(0L, end - start);
++    }
++
++    public record Result(String generator, double seconds,
++                         double samplesPerSecond, double chunkAreaPerSecond,
++                         double cellsPerSecond, double sectionsPerSecond,
++                         double cacheHitPercent, double averageSampleMicros,
++                         double averageQueueLatencyMillis, long jobsStarted,
++                         long jobsFinished, long jobsCancelled, long jobsFailed,
++                         int peakPending, long endingMemoryBytes,
++                         long memoryDeltaBytes) {
++        public List<String> lines() {
++            return List.of(
++                    String.format(Locale.ROOT, "Seed LOD benchmark: %.1fs, %s", this.seconds, this.generator),
++                    String.format(Locale.ROOT, "samples %.0f/s, CPU %.1f us/sample, cache %.1f%%", this.samplesPerSecond, this.averageSampleMicros, this.cacheHitPercent),
++                    String.format(Locale.ROOT, "chunk-area %.1f/s, sections %.1f/s, cells %.0f/s", this.chunkAreaPerSecond, this.sectionsPerSecond, this.cellsPerSecond),
++                    String.format(Locale.ROOT, "jobs %d started / %d done / %d cancelled / %d failed", this.jobsStarted, this.jobsFinished, this.jobsCancelled, this.jobsFailed),
++                    String.format(Locale.ROOT, "queue %.1f ms average, peak pending %d", this.averageQueueLatencyMillis, this.peakPending),
++                    String.format(Locale.ROOT, "estimated memory %.1f MiB (%+.1f MiB during run)", this.endingMemoryBytes / 1048576.0, this.memoryDeltaBytes / 1048576.0));
++        }
++    }
++}
+diff --git a/src/main/java/me/cortex/voxy/client/seedlod/SeedLodDebugHud.java b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodDebugHud.java
+new file mode 100644
+index 00000000..709db2cc
+--- /dev/null
++++ b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodDebugHud.java
+@@ -0,0 +1,119 @@
++package me.cortex.voxy.client.seedlod;
++
++import me.cortex.voxy.client.VoxyClientInstance;
++import me.cortex.voxy.client.config.VoxyConfig;
++import me.cortex.voxy.commonImpl.VoxyCommon;
++import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
++import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.GuiGraphicsExtractor;
++import net.minecraft.resources.Identifier;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Locale;
++
++public final class SeedLodDebugHud {
++    private static final Identifier ID = Identifier.fromNamespaceAndPath("voxy", "seed_lod_debug");
++
++    private SeedLodDebugHud() {}
++
++    public static void init() {
++        HudElementRegistry.attachElementBefore(VanillaHudElements.CHAT, ID,
++                (graphics, deltaTracker) -> render(graphics));
++    }
++
++    private static void render(GuiGraphicsExtractor graphics) {
++        if (!VoxyConfig.CONFIG.seedLodDebugHud) return;
++        var common = VoxyCommon.getInstance();
++        if (!(common instanceof VoxyClientInstance instance)) return;
++
++        SeedLodMetrics.Snapshot snapshot = instance.getSeedLodManager().debugSnapshot();
++        List<String> lines = lines(snapshot);
++        Minecraft client = Minecraft.getInstance();
++        int width = 0;
++        for (String line : lines) width = Math.max(width, client.font.width(line));
++        int lineHeight = client.font.lineHeight + 1;
++        int panelX = 4;
++        int panelY = 4;
++        int panelWidth = width + 10;
++        int panelHeight = lines.size() * lineHeight + 8;
++        graphics.fill(panelX, panelY, panelX + panelWidth, panelY + panelHeight, 0xB0101010);
++        graphics.outline(panelX, panelY, panelWidth, panelHeight, 0xCC65D6FF);
++        for (int index = 0; index < lines.size(); index++) {
++            int color = index == 0 ? 0xFF65D6FF : 0xFFFFFFFF;
++            graphics.text(client.font, lines.get(index), panelX + 5,
++                    panelY + 4 + index * lineHeight, color, true);
++        }
++
++        if (VoxyConfig.CONFIG.seedLodDebugMap) {
++            renderMap(graphics, instance.getSeedLodManager(), panelX + panelWidth + 6, panelY);
++        }
++    }
++
++    public static List<String> lines(SeedLodMetrics.Snapshot snapshot) {
++        var runtime = snapshot.runtime();
++        long[] writes = snapshot.sectionWrites();
++        List<String> lines = new ArrayList<>();
++        lines.add("Seed LOD diagnostics " + (runtime.active() ? "ACTIVE" : "INACTIVE"));
++        lines.add("generator fingerprint " + runtime.generatorFingerprint());
++        lines.add("outer stride " + runtime.effectiveMaximumStride()
++                + "  auto " + runtime.automaticQualityStatus());
++        lines.add(String.format(Locale.ROOT, "radius %d  stride@player %d  ring %d",
++                runtime.radius(), runtime.playerStride(), runtime.activeRing()));
++        lines.add(String.format(Locale.ROOT, "jobs q/r/d %d/%d/%d  peak %d",
++                runtime.queued(), runtime.running(), snapshot.jobsFinished(), snapshot.peakPending()));
++        lines.add(String.format(Locale.ROOT, "samples %.0f/s  %.1f us/sample",
++                snapshot.samplesPerSecond(), snapshot.averageSampleMicros()));
++        lines.add(String.format(Locale.ROOT, "sections %.1f/s  cells %.0f/s",
++                snapshot.sectionsPerSecond(), snapshot.cellsPerSecond()));
++        lines.add(String.format(Locale.ROOT, "writes L0/L2/L3/L4 %d/%d/%d/%d",
++                writes[0], writes[2], writes[3], writes[4]));
++        lines.add(String.format(Locale.ROOT, "sample cache %.1f%%  %d entries",
++                snapshot.cacheHitPercent(), runtime.sampleCacheEntries()));
++        lines.add(String.format(Locale.ROOT, "queue latency %.1f ms  cancel/fail %d/%d",
++                snapshot.averageQueueLatencyMillis(), snapshot.jobsCancelled(), snapshot.jobsFailed()));
++        lines.add(String.format(Locale.ROOT, "teleport cancels %d  completed regions %d",
++                snapshot.teleportCancelled(), runtime.completedRegions()));
++        lines.add(String.format(Locale.ROOT, "hierarchy repairs/children %d/%d",
++                runtime.hierarchyRepairs(), runtime.hierarchyChildrenMaterialized()));
++        lines.add(String.format(Locale.ROOT, "real replacements sections/voxels %d/%d",
++                runtime.realReplacementSections(), runtime.realReplacementVoxels()));
++        lines.add(String.format(Locale.ROOT, "estimated Seed LOD memory %.1f MiB",
++                runtime.estimatedMemoryBytes() / 1048576.0));
++        return lines;
++    }
++
++    private static void renderMap(GuiGraphicsExtractor graphics, SeedLodManager manager,
++                                  int originX, int originY) {
++        List<SeedLodManager.DebugCell> cells = manager.debugCells(24);
++        int size = 49;
++        graphics.fill(originX, originY, originX + size + 8, originY + size + 25, 0xB0101010);
++        graphics.outline(originX, originY, size + 8, size + 25, 0xCC65D6FF);
++        for (SeedLodManager.DebugCell cell : cells) {
++            int x = originX + 4 + cell.relativeX();
++            int y = originY + 4 + cell.relativeZ();
++            graphics.fill(x, y, x + 1, y + 1, debugColor(cell.level(), cell.state()));
++        }
++        graphics.fill(originX + 4 + 24, originY + 4 + 24,
++                originX + 5 + 24, originY + 5 + 24, 0xFFFFFFFF);
++        Minecraft client = Minecraft.getInstance();
++        graphics.text(client.font, "L0 L2 L3 L4", originX + 4,
++                originY + size + 5, 0xFFFFFFFF, true);
++        graphics.text(client.font, "map: dark missing, bright done", originX + 4,
++                originY + size + 14, 0xFFB8B8B8, true);
++    }
++
++    private static int debugColor(int level, int state) {
++        int color = switch (level) {
++            case 0 -> 0xFF49D17D;
++            case 2 -> 0xFFFFD166;
++            case 3 -> 0xFFFF8C42;
++            case 4 -> 0xFFD66BFF;
++            default -> 0xFF6D7785;
++        };
++        if (state == 0) return 0xFF301C24;
++        if (state == 1) return 0xFFFFFFFF;
++        return color;
++    }
++}
+diff --git a/src/main/java/me/cortex/voxy/client/seedlod/SeedLodFingerprintStore.java b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodFingerprintStore.java
+new file mode 100644
+index 00000000..601a829d
+--- /dev/null
++++ b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodFingerprintStore.java
+@@ -0,0 +1,107 @@
++package me.cortex.voxy.client.seedlod;
++
++import java.io.IOException;
++import java.io.Reader;
++import java.io.Writer;
++import java.nio.charset.StandardCharsets;
++import java.nio.file.AtomicMoveNotSupportedException;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.nio.file.StandardCopyOption;
++import java.security.MessageDigest;
++import java.security.NoSuchAlgorithmException;
++import java.util.HexFormat;
++import java.util.List;
++import java.util.Properties;
++
++/** Small sidecar used to detect world-generator changes without touching real Voxy data. */
++public final class SeedLodFingerprintStore {
++    static final int FORMAT_VERSION = 1;
++    static final int PREDICTION_VERSION = 18;
++
++    private SeedLodFingerprintStore() {}
++
++    public static String hashComponents(List<String> components) {
++        try {
++            MessageDigest digest = MessageDigest.getInstance("SHA-256");
++            for (String component : components) {
++                byte[] bytes = component.getBytes(StandardCharsets.UTF_8);
++                digest.update((byte) (bytes.length >>> 24));
++                digest.update((byte) (bytes.length >>> 16));
++                digest.update((byte) (bytes.length >>> 8));
++                digest.update((byte) bytes.length);
++                digest.update(bytes);
++            }
++            return HexFormat.of().formatHex(digest.digest());
++        } catch (NoSuchAlgorithmException impossible) {
++            throw new IllegalStateException("SHA-256 is unavailable", impossible);
++        }
++    }
++
++    public static CheckResult checkAndUpdate(Path file, String fingerprint,
++                                             String generator) throws IOException {
++        String previous = null;
++        int previousFormat = -1;
++        int previousPredictionVersion = -1;
++        if (Files.isRegularFile(file)) {
++            Properties properties = new Properties();
++            try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
++                properties.load(reader);
++            }
++            previous = properties.getProperty("fingerprint");
++            previousFormat = parseInt(properties.getProperty("formatVersion"));
++            previousPredictionVersion = parseInt(properties.getProperty("predictionVersion"));
++        }
++
++        State state;
++        if (previous == null) {
++            state = State.NEW;
++        } else if (previousFormat == FORMAT_VERSION
++                && previousPredictionVersion == PREDICTION_VERSION
++                && previous.equals(fingerprint)) {
++            state = State.MATCH;
++        } else {
++            state = State.MISMATCH;
++        }
++
++        Files.createDirectories(file.getParent());
++        Properties updated = new Properties();
++        updated.setProperty("formatVersion", Integer.toString(FORMAT_VERSION));
++        updated.setProperty("predictionVersion", Integer.toString(PREDICTION_VERSION));
++        updated.setProperty("fingerprint", fingerprint);
++        updated.setProperty("generator", generator);
++        Path temporary = Files.createTempFile(file.getParent(), "seedlod-fingerprint-", ".tmp");
++        try {
++            try (Writer writer = Files.newBufferedWriter(temporary, StandardCharsets.UTF_8)) {
++                updated.store(writer, "Voxy Seed LOD generator fingerprint");
++            }
++            try {
++                Files.move(temporary, file, StandardCopyOption.ATOMIC_MOVE,
++                        StandardCopyOption.REPLACE_EXISTING);
++            } catch (AtomicMoveNotSupportedException ignored) {
++                Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
++            }
++        } finally {
++            Files.deleteIfExists(temporary);
++        }
++        return new CheckResult(state, previous, fingerprint);
++    }
++
++    private static int parseInt(String value) {
++        if (value == null) return -1;
++        try {
++            return Integer.parseInt(value);
++        } catch (NumberFormatException ignored) {
++            return -1;
++        }
++    }
++
++    public static long predictionMarker(String fingerprint) {
++        long value = Long.parseUnsignedLong(fingerprint.substring(0, 6), 16);
++        return 1L | (value << 1);
++    }
++
++    public enum State { NEW, MATCH, MISMATCH }
++    public record CheckResult(State state, String previousFingerprint,
++                              String currentFingerprint) {}
++}
 diff --git a/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java
 new file mode 100644
 index 00000000..f5d1c2b9
@@ -1938,6 +2270,205 @@ index 00000000..f5d1c2b9
 +        }
 +    }
 +}
+diff --git a/src/main/java/me/cortex/voxy/client/seedlod/SeedLodMetrics.java b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodMetrics.java
+new file mode 100644
+index 00000000..269f8a4a
+--- /dev/null
++++ b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodMetrics.java
+@@ -0,0 +1,193 @@
++package me.cortex.voxy.client.seedlod;
++
++import java.util.Arrays;
++import java.util.concurrent.atomic.AtomicInteger;
++import java.util.concurrent.atomic.LongAdder;
++
++/**
++ * Low-contention counters for the seed prediction pipeline. Worker threads only
++ * update adders. Rate calculation and formatting stay on the client thread.
++ */
++public final class SeedLodMetrics {
++    private static final long SNAPSHOT_INTERVAL_NANOS = 250_000_000L;
++
++    private final LongAdder generatorSamples = new LongAdder();
++    private final LongAdder generatorSampleNanos = new LongAdder();
++    private final LongAdder cacheHits = new LongAdder();
++    private final LongAdder cacheMisses = new LongAdder();
++    private final LongAdder cellsWritten = new LongAdder();
++    private final LongAdder jobsStarted = new LongAdder();
++    private final LongAdder jobsFinished = new LongAdder();
++    private final LongAdder chunkAreaFinished = new LongAdder();
++    private final LongAdder jobsCancelled = new LongAdder();
++    private final LongAdder jobsFailed = new LongAdder();
++    private final LongAdder teleportCancelled = new LongAdder();
++    private final LongAdder queueLatencyNanos = new LongAdder();
++    private final LongAdder[] sectionWrites = new LongAdder[5];
++    private final AtomicInteger peakPending = new AtomicInteger();
++
++    private volatile long previousTime = System.nanoTime();
++    private volatile long previousSamples;
++    private volatile long previousCells;
++    private volatile long previousSections;
++    private volatile Snapshot cached = Snapshot.empty();
++
++    public SeedLodMetrics() {
++        Arrays.setAll(this.sectionWrites, ignored -> new LongAdder());
++    }
++
++    public void recordGeneratorSample(long elapsedNanos) {
++        this.generatorSamples.increment();
++        this.generatorSampleNanos.add(Math.max(0L, elapsedNanos));
++    }
++
++    public void recordCacheHit() {
++        this.cacheHits.increment();
++    }
++
++    public void recordCacheMiss() {
++        this.cacheMisses.increment();
++    }
++
++    public void recordWrite(int level, long sections, long cells) {
++        if (level >= 0 && level < this.sectionWrites.length) {
++            this.sectionWrites[level].add(Math.max(0L, sections));
++        }
++        this.cellsWritten.add(Math.max(0L, cells));
++    }
++
++    public void recordJobQueued(int pending) {
++        this.peakPending.accumulateAndGet(pending, Math::max);
++    }
++
++    public void recordJobStarted(long enqueuedNanos) {
++        this.jobsStarted.increment();
++        this.queueLatencyNanos.add(Math.max(0L, System.nanoTime() - enqueuedNanos));
++    }
++
++    public void recordJobFinished(long chunkArea) {
++        this.jobsFinished.increment();
++        this.chunkAreaFinished.add(Math.max(0L, chunkArea));
++    }
++
++    public void recordJobCancelled(boolean afterTeleport) {
++        this.jobsCancelled.increment();
++        if (afterTeleport) this.teleportCancelled.increment();
++    }
++
++    public void recordJobFailed() {
++        this.jobsFailed.increment();
++    }
++
++    public Snapshot snapshot(RuntimeState state) {
++        long now = System.nanoTime();
++        Snapshot current = this.cached;
++        if (now - this.previousTime < SNAPSHOT_INTERVAL_NANOS) {
++            return current.withRuntime(state);
++        }
++
++        synchronized (this) {
++            now = System.nanoTime();
++            if (now - this.previousTime < SNAPSHOT_INTERVAL_NANOS) {
++                return this.cached.withRuntime(state);
++            }
++
++            long samples = this.generatorSamples.sum();
++            long cells = this.cellsWritten.sum();
++            long sections = totalSections();
++            double seconds = Math.max(0.001, (now - this.previousTime) / 1_000_000_000.0);
++            long hits = this.cacheHits.sum();
++            long misses = this.cacheMisses.sum();
++            long started = this.jobsStarted.sum();
++            long sampleNanos = this.generatorSampleNanos.sum();
++
++            current = new Snapshot(state,
++                    (samples - this.previousSamples) / seconds,
++                    (cells - this.previousCells) / seconds,
++                    (sections - this.previousSections) / seconds,
++                    hits + misses == 0 ? 0.0 : hits * 100.0 / (hits + misses),
++                    samples == 0 ? 0.0 : sampleNanos / 1_000.0 / samples,
++                    started == 0 ? 0.0 : this.queueLatencyNanos.sum() / 1_000_000.0 / started,
++                    samples, cells, this.sectionWriteSnapshot(), hits, misses,
++                    started, this.jobsFinished.sum(), this.jobsCancelled.sum(),
++                    this.jobsFailed.sum(), this.teleportCancelled.sum(),
++                    this.peakPending.get());
++            this.previousTime = now;
++            this.previousSamples = samples;
++            this.previousCells = cells;
++            this.previousSections = sections;
++            this.cached = current;
++            return current;
++        }
++    }
++
++    private long totalSections() {
++        long total = 0;
++        for (LongAdder writes : this.sectionWrites) total += writes.sum();
++        return total;
++    }
++
++    private long[] sectionWriteSnapshot() {
++        long[] result = new long[this.sectionWrites.length];
++        Arrays.setAll(result, index -> this.sectionWrites[index].sum());
++        return result;
++    }
++
++    public Totals totals() {
++        return new Totals(System.nanoTime(), this.generatorSamples.sum(),
++                this.generatorSampleNanos.sum(), this.cellsWritten.sum(),
++                this.totalSections(), this.cacheHits.sum(), this.cacheMisses.sum(),
++                this.jobsStarted.sum(), this.jobsFinished.sum(),
++                this.jobsCancelled.sum(), this.jobsFailed.sum(),
++                this.queueLatencyNanos.sum(), this.chunkAreaFinished.sum(),
++                this.peakPending.get());
++    }
++
++    public record Totals(long capturedNanos, long generatorSamples,
++                         long generatorSampleNanos, long cellsWritten,
++                         long sectionsWritten, long cacheHits, long cacheMisses,
++                         long jobsStarted, long jobsFinished, long jobsCancelled,
++                         long jobsFailed, long queueLatencyNanos,
++                         long chunkAreaFinished, int peakPending) {}
++
++    public record RuntimeState(boolean active, int radius, int playerStride,
++                               int activeRing, int queued, int running,
++                               int completedRegions, int sampleCacheEntries,
++                               long estimatedMemoryBytes, long hierarchyRepairs,
++                               long hierarchyChildrenMaterialized,
++                               long realReplacementSections,
++                               long realReplacementVoxels,
++                               String generatorFingerprint,
++                               int effectiveMaximumStride,
++                               String automaticQualityStatus) {
++        public static RuntimeState inactive() {
++            return new RuntimeState(false, 0, 0, 0, 0, 0,
++                    0, 0, 0L, 0L, 0L, 0L, 0L, "none", 0, "inactive");
++        }
++    }
++
++    public record Snapshot(RuntimeState runtime, double samplesPerSecond,
++                           double cellsPerSecond, double sectionsPerSecond,
++                           double cacheHitPercent, double averageSampleMicros,
++                           double averageQueueLatencyMillis, long totalSamples,
++                           long totalCells, long[] sectionWrites, long cacheHits,
++                           long cacheMisses, long jobsStarted, long jobsFinished,
++                           long jobsCancelled, long jobsFailed,
++                           long teleportCancelled, int peakPending) {
++        private static Snapshot empty() {
++            return new Snapshot(RuntimeState.inactive(), 0.0, 0.0, 0.0,
++                    0.0, 0.0, 0.0, 0L, 0L, new long[5],
++                    0L, 0L, 0L, 0L, 0L, 0L, 0L, 0);
++        }
++
++        private Snapshot withRuntime(RuntimeState state) {
++            return new Snapshot(state, this.samplesPerSecond, this.cellsPerSecond,
++                    this.sectionsPerSecond, this.cacheHitPercent,
++                    this.averageSampleMicros, this.averageQueueLatencyMillis,
++                    this.totalSamples, this.totalCells, this.sectionWrites,
++                    this.cacheHits, this.cacheMisses, this.jobsStarted,
++                    this.jobsFinished, this.jobsCancelled, this.jobsFailed,
++                    this.teleportCancelled, this.peakPending);
++        }
++    }
++}
 diff --git a/src/main/java/me/cortex/voxy/common/world/SaveLoadSystem3.java b/src/main/java/me/cortex/voxy/common/world/SaveLoadSystem3.java
 index 0a6d31c2..a8842155 100644
 --- a/src/main/java/me/cortex/voxy/common/world/SaveLoadSystem3.java
@@ -2630,4 +3161,340 @@ index 08d1299b..0bff2eb6 100644
    "voxy.config.general.ssao_mode.best": "Best"
 -}
 \ No newline at end of file
++}
+diff --git a/src/test/java/me/cortex/voxy/client/seedlod/SeedLodAutoQualityTest.java b/src/test/java/me/cortex/voxy/client/seedlod/SeedLodAutoQualityTest.java
+new file mode 100644
+index 00000000..82eca59d
+--- /dev/null
++++ b/src/test/java/me/cortex/voxy/client/seedlod/SeedLodAutoQualityTest.java
+@@ -0,0 +1,25 @@
++package me.cortex.voxy.client.seedlod;
++
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class SeedLodAutoQualityTest {
++    @Test
++    void keepsQualityInsideHysteresisBand() {
++        assertEquals(64, SeedLodAutoQuality.recommend(64, 30, 30));
++        assertEquals(64, SeedLodAutoQuality.recommend(64, 21, 30));
++    }
++
++    @Test
++    void makesSlowHorizonsCoarser() {
++        assertEquals(128, SeedLodAutoQuality.recommend(64, 45, 30));
++        assertEquals(128, SeedLodAutoQuality.recommend(32, 100, 30));
++    }
++
++    @Test
++    void spendsFastHeadroomOnQuality() {
++        assertEquals(32, SeedLodAutoQuality.recommend(128, 10, 30));
++        assertEquals(64, SeedLodAutoQuality.recommend(128, 18, 30));
++    }
++}
+diff --git a/src/test/java/me/cortex/voxy/client/seedlod/SeedLodBenchmarkTest.java b/src/test/java/me/cortex/voxy/client/seedlod/SeedLodBenchmarkTest.java
+new file mode 100644
+index 00000000..5a736b73
+--- /dev/null
++++ b/src/test/java/me/cortex/voxy/client/seedlod/SeedLodBenchmarkTest.java
+@@ -0,0 +1,41 @@
++package me.cortex.voxy.client.seedlod;
++
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class SeedLodBenchmarkTest {
++    @Test
++    void calculatesRatesFromRunDeltasInsteadOfLifetimeTotals() {
++        var start = new SeedLodMetrics.Totals(1_000_000_000L, 100, 2_000_000,
++                500, 20, 60, 40, 10, 8, 1, 0,
++                100_000_000L, 128, 40);
++        var end = new SeedLodMetrics.Totals(3_000_000_000L, 300, 6_000_000,
++                1500, 60, 210, 90, 30, 25, 2, 1,
++                300_000_000L, 640, 70);
++
++        var result = SeedLodBenchmark.calculate("NoiseBasedChunkGenerator",
++                start, end, 10L << 20, 14L << 20, 55);
++
++        assertEquals(2.0, result.seconds(), 0.0001);
++        assertEquals(100.0, result.samplesPerSecond(), 0.0001);
++        assertEquals(256.0, result.chunkAreaPerSecond(), 0.0001);
++        assertEquals(500.0, result.cellsPerSecond(), 0.0001);
++        assertEquals(20.0, result.sectionsPerSecond(), 0.0001);
++        assertEquals(75.0, result.cacheHitPercent(), 0.0001);
++        assertEquals(20.0, result.averageSampleMicros(), 0.0001);
++        assertEquals(10.0, result.averageQueueLatencyMillis(), 0.0001);
++        assertEquals(4L << 20, result.memoryDeltaBytes());
++        assertEquals(55, result.peakPending());
++    }
++
++    @Test
++    void handlesAnIdleMeasurementWithoutDivisionByZero() {
++        var totals = new SeedLodMetrics.Totals(5_000_000_000L, 0, 0,
++                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
++        var result = SeedLodBenchmark.calculate("Generator", totals, totals, 0, 0, 0);
++        assertEquals(0.0, result.samplesPerSecond());
++        assertEquals(0.0, result.averageSampleMicros());
++        assertEquals(0.0, result.cacheHitPercent());
++    }
++}
+diff --git a/src/test/java/me/cortex/voxy/client/seedlod/SeedLodFingerprintStoreTest.java b/src/test/java/me/cortex/voxy/client/seedlod/SeedLodFingerprintStoreTest.java
+new file mode 100644
+index 00000000..09531055
+--- /dev/null
++++ b/src/test/java/me/cortex/voxy/client/seedlod/SeedLodFingerprintStoreTest.java
+@@ -0,0 +1,51 @@
++package me.cortex.voxy.client.seedlod;
++
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.io.TempDir;
++
++import java.nio.file.Path;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertNotEquals;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++class SeedLodFingerprintStoreTest {
++    @TempDir
++    Path directory;
++
++    @Test
++    void componentBoundariesCannotCollide() {
++        String first = SeedLodFingerprintStore.hashComponents(List.of("ab", "c"));
++        String second = SeedLodFingerprintStore.hashComponents(List.of("a", "bc"));
++        assertNotEquals(first, second);
++    }
++
++    @Test
++    void detectsNewMatchingAndChangedGenerators() throws Exception {
++        Path file = this.directory.resolve("world").resolve("seedlod-fingerprint.properties");
++        String first = SeedLodFingerprintStore.hashComponents(List.of("seed=1", "generator=vanilla"));
++        String second = SeedLodFingerprintStore.hashComponents(List.of("seed=1", "generator=tectonic"));
++
++        assertEquals(SeedLodFingerprintStore.State.NEW,
++                SeedLodFingerprintStore.checkAndUpdate(file, first, "vanilla").state());
++        assertEquals(SeedLodFingerprintStore.State.MATCH,
++                SeedLodFingerprintStore.checkAndUpdate(file, first, "vanilla").state());
++        assertEquals(SeedLodFingerprintStore.State.MISMATCH,
++                SeedLodFingerprintStore.checkAndUpdate(file, second, "tectonic").state());
++        assertTrue(java.nio.file.Files.isRegularFile(file));
++    }
++
++    @Test
++    void markerKeepsPredictionBitAndChangesWithFingerprint() {
++        String first = SeedLodFingerprintStore.hashComponents(List.of("one"));
++        String second = SeedLodFingerprintStore.hashComponents(List.of("two"));
++        long firstMarker = SeedLodFingerprintStore.predictionMarker(first);
++        long secondMarker = SeedLodFingerprintStore.predictionMarker(second);
++        assertEquals(1L, firstMarker & 1L);
++        assertEquals(1L, secondMarker & 1L);
++        assertNotEquals(firstMarker, secondMarker);
++        assertTrue(firstMarker < (1L << 27));
++        assertTrue(secondMarker < (1L << 27));
++    }
++}
+diff --git a/src/test/java/me/cortex/voxy/common/world/WorldUpdaterHierarchyTest.java b/src/test/java/me/cortex/voxy/common/world/WorldUpdaterHierarchyTest.java
+new file mode 100644
+index 00000000..511e023b
+--- /dev/null
++++ b/src/test/java/me/cortex/voxy/common/world/WorldUpdaterHierarchyTest.java
+@@ -0,0 +1,195 @@
++package me.cortex.voxy.common.world;
++
++import me.cortex.voxy.common.util.MemoryBuffer;
++import me.cortex.voxy.common.world.other.Mapper;
++import org.junit.jupiter.api.Test;
++import org.lwjgl.system.MemoryUtil;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.concurrent.CountDownLatch;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class WorldUpdaterHierarchyTest {
++    private static final long AIR = Mapper.airWithLight(15);
++    private static final long PREDICTED_STONE = (1L << 27) | 1L;
++    private static final long REAL_STONE = 2L << 27;
++
++    @Test
++    void requiredMaskMatchesEveryOctant() {
++        long[] data = filledAir();
++        for (int child = 0; child < 8; child++) {
++            int x = ((child & 1) << 4) + 3;
++            int y = (((child >> 2) & 1) << 4) + 5;
++            int z = (((child >> 1) & 1) << 4) + 7;
++            data[WorldSection.getIndex(x, y, z)] = PREDICTED_STONE;
++            assertEquals((1 << (child + 1)) - 1,
++                    WorldUpdater.requiredCoarseChildMask(data));
++        }
++    }
++
++    @Test
++    void partialChildMaskNeverCountsAsCompleteCoverage() {
++        int terrainOctants = 0b0000_1111;
++        assertTrue(hasVisibleCoverage(terrainOctants, 0, true));
++        assertFalse(WorldUpdater.hasCompleteCoverage(terrainOctants, 0));
++        // A coarse leaf is still visible while it has no children. Once any
++        // child is published, all required terrain octants must be present.
++        for (int partial = 1; partial != terrainOctants; partial = (partial << 1) | 1) {
++            assertFalse(WorldUpdater.hasCompleteCoverage(terrainOctants, partial));
++            assertFalse(hasVisibleCoverage(terrainOctants, partial, false));
++        }
++        assertTrue(WorldUpdater.hasCompleteCoverage(terrainOctants, terrainOctants));
++        assertTrue(hasVisibleCoverage(terrainOctants, terrainOctants, false));
++        assertTrue(WorldUpdater.hasCompleteCoverage(terrainOctants, 0xFF));
++    }
++
++    @Test
++    void materializesCompleteChildFromCoarseParent() {
++        WorldSection parent = section(2, 0, 0, 0);
++        WorldSection child = section(1, 1, 0, 1);
++        fill(parent.data, AIR);
++        fill(child.data, AIR);
++        parent.data[WorldSection.getIndex(16 + 6, 4, 16 + 9)] = PREDICTED_STONE;
++
++        assertTrue(WorldUpdater.materializeChildFallback(parent, child, 16, 0, 16));
++        // A parent cell expands to a 2 by 2 by 2 child-cell cube.
++        for (int y = 8; y <= 9; y++) {
++            for (int z = 18; z <= 19; z++) {
++                for (int x = 12; x <= 13; x++) {
++                    assertEquals(PREDICTED_STONE,
++                            child.data[WorldSection.getIndex(x, y, z)]);
++                }
++            }
++        }
++    }
++
++    @Test
++    void preservesExistingFinerOctantDuringFallbackExpansion() {
++        WorldSection parent = section(2, 0, 0, 0);
++        WorldSection child = section(1, 0, 0, 0);
++        fill(parent.data, PREDICTED_STONE);
++        fill(child.data, AIR);
++        child._unsafeSetNonEmptyChildren((byte) 1);
++        child.data[WorldSection.getIndex(2, 2, 2)] = REAL_STONE;
++
++        assertTrue(WorldUpdater.materializeChildFallback(parent, child, 0, 0, 0));
++        assertEquals(REAL_STONE, child.data[WorldSection.getIndex(2, 2, 2)]);
++        assertEquals(AIR, child.data[WorldSection.getIndex(4, 4, 4)],
++                "the entire covered grandchild octant must remain untouched");
++        assertEquals(PREDICTED_STONE, child.data[WorldSection.getIndex(20, 4, 4)],
++                "an uncovered sibling octant must inherit fallback data");
++    }
++
++    @Test
++    void levelZeroBackfillDoesNotReplaceRealTerrain() {
++        WorldSection parent = section(1, 0, 0, 0);
++        WorldSection child = section(0, 0, 0, 0);
++        fill(parent.data, PREDICTED_STONE);
++        fill(child.data, AIR);
++        child.data[WorldSection.getIndex(8, 8, 8)] = REAL_STONE;
++
++        WorldUpdater.materializeChildFallback(parent, child, 0, 0, 0);
++        assertEquals(REAL_STONE, child.data[WorldSection.getIndex(8, 8, 8)]);
++        assertEquals(PREDICTED_STONE, child.data[WorldSection.getIndex(24, 8, 8)]);
++    }
++
++    @Test
++    void concurrentSiblingPublicationProducesCompleteMask() throws Exception {
++        WorldSection parent = section(2, -3, 1, -5);
++        List<WorldSection> children = new ArrayList<>();
++        for (int child = 0; child < 8; child++) {
++            WorldSection section = section(1,
++                    (parent.x << 1) | (child & 1),
++                    (parent.y << 1) | ((child >> 2) & 1),
++                    (parent.z << 1) | ((child >> 1) & 1));
++            section.markCoarseContent();
++            children.add(section);
++        }
++
++        CountDownLatch start = new CountDownLatch(1);
++        List<Thread> threads = new ArrayList<>();
++        for (WorldSection child : children) {
++            Thread thread = new Thread(() -> {
++                try {
++                    start.await();
++                } catch (InterruptedException exception) {
++                    throw new RuntimeException(exception);
++                }
++                parent.updateEmptyChildState(child);
++            });
++            threads.add(thread);
++            thread.start();
++        }
++        start.countDown();
++        for (Thread thread : threads) thread.join();
++        assertEquals(0xFF, Byte.toUnsignedInt(parent.getNonEmptyChildren()));
++    }
++
++    @Test
++    void saveReloadPreservesCoarseHierarchyFlags() {
++        WorldSection source = section(3, -7, 2, 11);
++        fill(source.data, AIR);
++        source.data[WorldSection.getIndex(1, 2, 3)] = PREDICTED_STONE;
++        source._unsafeSetNonEmptyChildren((byte) 0b0011_1100);
++        source.markCoarseContent();
++        source.markCoarseChildrenComplete();
++
++        MemoryBuffer serialized = SaveLoadSystem3.serialize(source);
++        WorldSection restored = section(3, -7, 2, 11);
++        assertTrue(SaveLoadSystem3.deserialize(restored, serialized));
++        assertTrue(restored.hasCoarseContent());
++        assertTrue(restored.hasCompleteCoarseChildren());
++        assertEquals(0b0011_1100, Byte.toUnsignedInt(restored.getNonEmptyChildren()));
++        assertArrayEquals(source.data, restored.data);
++    }
++
++    @Test
++    void oldCacheLoadsAsNeedingHierarchyRepair() {
++        WorldSection source = section(4, 2, 0, -2);
++        fill(source.data, AIR);
++        source.data[WorldSection.getIndex(1, 1, 1)] = PREDICTED_STONE;
++        source.markCoarseContent();
++        source.markCoarseChildrenComplete();
++        MemoryBuffer serialized = SaveLoadSystem3.serialize(source);
++
++        long metadata = MemoryUtil.memGetLong(serialized.address + 8);
++        MemoryUtil.memPutLong(serialized.address + 8, metadata & ~(1L << 25));
++        WorldSection restored = section(4, 2, 0, -2);
++        assertTrue(SaveLoadSystem3.deserialize(restored, serialized));
++        assertTrue(restored.hasCoarseContent());
++        assertFalse(restored.hasCompleteCoarseChildren());
++    }
++
++    @Test
++    void negativeCoordinatesKeepCorrectChildIndex() {
++        WorldSection parent = section(2, -2, -1, -3);
++        for (int childIndex = 0; childIndex < 8; childIndex++) {
++            WorldSection child = section(1,
++                    (parent.x << 1) | (childIndex & 1),
++                    (parent.y << 1) | ((childIndex >> 2) & 1),
++                    (parent.z << 1) | ((childIndex >> 1) & 1));
++            assertEquals(childIndex, WorldSection.getChildIndex(child.x, child.y, child.z));
++        }
++    }
++
++    private static WorldSection section(int level, int x, int y, int z) {
++        return new WorldSection(level, x, y, z, null);
++    }
++
++    private static boolean hasVisibleCoverage(int requiredMask, int childMask,
++                                              boolean parentVisible) {
++        return parentVisible || WorldUpdater.hasCompleteCoverage(requiredMask, childMask);
++    }
++
++    private static long[] filledAir() {
++        long[] data = new long[WorldSection.SECTION_VOLUME];
++        fill(data, AIR);
++        return data;
++    }
++
++    private static void fill(long[] data, long value) {
++        java.util.Arrays.fill(data, value);
++    }
 +}

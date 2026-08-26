@@ -12,6 +12,7 @@
 - Added the effective outer stride and auto-quality state to the debug HUD.
 - Added three automatic-quality decision tests. The full suite now contains seventeen tests.
 - Automatic targeting is disabled by default until it has received broader gameplay testing.
+- Corrected the public patch bundle to include every new diagnostics, benchmark, fingerprint, auto-quality, and test source file. The exact patch now passes a clean build in a fresh clone of the pinned upstream commit.
 
 ## seedlod.18
 
