@@ -1,6 +1,15 @@
 # Changelog
 
-## seedlod.6: current patch
+## seedlod.7: current patch
+
+- Extended the initial sparse pass through the starting area, removing the intentional inner gap.
+- Replaced scattered detailed chunk updates with aligned 16 by 16-chunk reconstruction regions.
+- Added automatic stride-2 nearby, stride-4 medium and stride-8 outer reconstruction tiers.
+- Kept coarse parents visible while refined replacement regions are prepared.
+- Added deferred, coalesced Voxy hierarchy publication to prevent partial children from cutting rectangular holes into coarse tiles.
+- Allowed closer movement to upgrade completed regions without downgrading regions left behind.
+
+## seedlod.6
 
 - Added instant sparse loading using persistent 512 by 512-block Voxy top-level tiles.
 - Added shared 32-block terrain sampling for the far field.

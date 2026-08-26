@@ -1,5 +1,5 @@
 diff --git a/gradle.properties b/gradle.properties
-index a25ea295..c0c2ad8c 100644
+index a25ea295..126c9b20 100644
 --- a/gradle.properties
 +++ b/gradle.properties
 @@ -29,6 +29,6 @@ nvidium_version=0.4.3-beta13-26.1
@@ -7,7 +7,7 @@ index a25ea295..c0c2ad8c 100644
  
  # Mod Properties
 -mod_version = 0.2.19-beta
-+mod_version = 0.2.19-beta-seedlod.6
++mod_version = 0.2.19-beta-seedlod.7
  maven_group = me.cortex
 -archives_base_name = voxy
 \ No newline at end of file
@@ -178,10 +178,10 @@ index d456e55c..3ab4d701 100644
                  new Page(Component.translatable("voxy.config.rendering"),
 diff --git a/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java
 new file mode 100644
-index 00000000..64fc24da
+index 00000000..2b7ded7f
 --- /dev/null
 +++ b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java
-@@ -0,0 +1,1202 @@
+@@ -0,0 +1,1352 @@
 +package me.cortex.voxy.client.seedlod;
 +
 +import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
@@ -211,8 +211,10 @@ index 00000000..64fc24da
 +import net.minecraft.world.level.levelgen.RandomState;
 +
 +import java.util.Arrays;
++import java.util.ArrayList;
 +import java.util.HashMap;
 +import java.util.HashSet;
++import java.util.List;
 +import java.util.Locale;
 +import java.util.Map;
 +import java.util.Set;
@@ -244,6 +246,7 @@ index 00000000..64fc24da
 +    private static final int COARSE_SAMPLE_BLOCKS = 32;
 +    private static final int COARSE_VOXEL_BLOCKS = 1 << COARSE_LOD_LEVEL;
 +    private static final int COARSE_GRID_SAMPLES = 512 / COARSE_SAMPLE_BLOCKS + 1;
++    private static final int DETAIL_TILE_CHUNKS = 16;
 +    // Voxy currently leaves the low 27 bits unused. Marking predictions lets a
 +    // later seed pass replace them without ever replacing authoritative chunks.
 +    private static final long PREDICTION_MARKER = 1L;
@@ -255,6 +258,7 @@ index 00000000..64fc24da
 +    // upgrades it, while moving away never wastes work downgrading it.
 +    private final ConcurrentHashMap<Long, Integer> plannedStrides = new ConcurrentHashMap<>();
 +    private final Set<Long> plannedCoarseTiles = ConcurrentHashMap.newKeySet();
++    private final ConcurrentHashMap<Long, Integer> plannedDetailTiles = new ConcurrentHashMap<>();
 +
 +    private volatile Binding binding;
 +    private volatile int playerChunkX;
@@ -314,6 +318,7 @@ index 00000000..64fc24da
 +            this.binding = current;
 +            this.plannedStrides.clear();
 +            this.plannedCoarseTiles.clear();
++            this.plannedDetailTiles.clear();
 +            this.scanInitialized = false;
 +            this.detailScanFinished = false;
 +            this.scannedInnerRadius = -1;
@@ -343,15 +348,16 @@ index 00000000..64fc24da
 +        if (targetRadius <= this.innerRadius) {
 +            return;
 +        }
-+        if (VoxyConfig.CONFIG.seedLodSparseLoading
-+                && !this.scheduleCoarseTiles(current, targetRadius)) {
-+            return;
-+        }
-+
 +        int detailRadius = VoxyConfig.CONFIG.seedLodSparseLoading
 +                ? Math.min(targetRadius, Math.max(this.innerRadius,
 +                        VoxyConfig.CONFIG.seedLodSparseDetailDistance))
 +                : targetRadius;
++        if (VoxyConfig.CONFIG.seedLodSparseLoading) {
++            if (this.scheduleCoarseTiles(current, targetRadius)) {
++                this.scheduleDetailTiles(current, detailRadius);
++            }
++            return;
++        }
 +        if (this.scannedInnerRadius != this.innerRadius || this.scannedDetailRadius != detailRadius) {
 +            this.spiralIndex = 0;
 +            this.detailScanFinished = false;
@@ -467,7 +473,6 @@ index 00000000..64fc24da
 +        int minTileZ = Math.floorDiv(this.scanCenterZ - targetRadius, COARSE_TILE_CHUNKS);
 +        int maxTileZ = Math.floorDiv(this.scanCenterZ + targetRadius, COARSE_TILE_CHUNKS);
 +        long targetSquared = (long) targetRadius * targetRadius;
-+        long innerSquared = (long) this.innerRadius * this.innerRadius;
 +        boolean allScheduled = true;
 +        int enqueued = 0;
 +
@@ -475,9 +480,7 @@ index 00000000..64fc24da
 +            for (int tileX = minTileX; tileX <= maxTileX; tileX++) {
 +                long minimumDistanceSquared = minimumDistanceSquaredToTile(
 +                        this.scanCenterX, this.scanCenterZ, tileX, tileZ);
-+                if (minimumDistanceSquared > targetSquared
-+                        || maximumDistanceSquaredToTile(this.scanCenterX, this.scanCenterZ,
-+                        tileX, tileZ) < innerSquared) {
++                if (minimumDistanceSquared > targetSquared) {
 +                    continue;
 +                }
 +
@@ -535,24 +538,101 @@ index 00000000..64fc24da
 +        return allScheduled;
 +    }
 +
-+    private static long minimumDistanceSquaredToTile(int centerX, int centerZ, int tileX, int tileZ) {
-+        int minX = tileX * COARSE_TILE_CHUNKS;
-+        int maxX = minX + COARSE_TILE_CHUNKS - 1;
-+        int minZ = tileZ * COARSE_TILE_CHUNKS;
-+        int maxZ = minZ + COARSE_TILE_CHUNKS - 1;
++    private boolean scheduleDetailTiles(Binding taskBinding, int detailRadius) {
++        int minTileX = Math.floorDiv(this.scanCenterX - detailRadius, DETAIL_TILE_CHUNKS);
++        int maxTileX = Math.floorDiv(this.scanCenterX + detailRadius, DETAIL_TILE_CHUNKS);
++        int minTileZ = Math.floorDiv(this.scanCenterZ - detailRadius, DETAIL_TILE_CHUNKS);
++        int maxTileZ = Math.floorDiv(this.scanCenterZ + detailRadius, DETAIL_TILE_CHUNKS);
++        long detailSquared = (long) detailRadius * detailRadius;
++        boolean allScheduled = true;
++        int enqueued = 0;
++
++        for (int tileZ = minTileZ; tileZ <= maxTileZ; tileZ++) {
++            for (int tileX = minTileX; tileX <= maxTileX; tileX++) {
++                long minimumDistanceSquared = minimumDistanceSquaredToRegion(
++                        this.scanCenterX, this.scanCenterZ, tileX, tileZ, DETAIL_TILE_CHUNKS);
++                if (minimumDistanceSquared > detailSquared) {
++                    continue;
++                }
++
++                int distanceSquared = (int) Math.min(Integer.MAX_VALUE, minimumDistanceSquared);
++                int stride = progressiveStrideForDistance(
++                        distanceSquared, this.innerRadius, detailRadius);
++                long key = net.minecraft.world.level.ChunkPos.pack(tileX, tileZ);
++                Integer previousStride = this.plannedDetailTiles.get(key);
++                if (previousStride != null && previousStride <= stride) {
++                    continue;
++                }
++                if (this.pendingTasks.get() >= MAX_PENDING_TASKS || enqueued >= MAX_ENQUEUE_PER_TICK) {
++                    allScheduled = false;
++                    continue;
++                }
++                this.plannedDetailTiles.put(key, stride);
++
++                int finalTileX = tileX;
++                int finalTileZ = tileZ;
++                this.pendingTasks.incrementAndGet();
++                try {
++                    this.executor.execute(new PrioritizedTask(DETAIL_PRIORITY,
++                            Math.sqrt(minimumDistanceSquared), this.taskSequence.getAndIncrement(), () -> {
++                        boolean keepPlanned = true;
++                        boolean acquired = false;
++                        try {
++                            if (this.binding != taskBinding || !VoxyConfig.CONFIG.seedLodEnabled
++                                    || !taskBinding.world.isLive()
++                                    || !Integer.valueOf(stride).equals(this.plannedDetailTiles.get(key))) {
++                                return;
++                            }
++                            taskBinding.world.acquireRef();
++                            acquired = true;
++                            generateDetailTile(taskBinding, key, finalTileX, finalTileZ, stride);
++                        } catch (Throwable throwable) {
++                            keepPlanned = false;
++                            Logger.error("Seed LOD refinement failed for tile "
++                                    + finalTileX + ", " + finalTileZ, throwable);
++                        } finally {
++                            if (acquired && taskBinding.world.isLive()) {
++                                taskBinding.world.releaseRef();
++                            }
++                            if (!keepPlanned && this.binding == taskBinding
++                                    && Integer.valueOf(stride).equals(this.plannedDetailTiles.get(key))) {
++                                if (previousStride == null) {
++                                    this.plannedDetailTiles.remove(key, stride);
++                                } else {
++                                    this.plannedDetailTiles.replace(key, stride, previousStride);
++                                }
++                            }
++                            this.pendingTasks.decrementAndGet();
++                        }
++                    }));
++                    enqueued++;
++                } catch (RejectedExecutionException ignored) {
++                    this.pendingTasks.decrementAndGet();
++                    if (previousStride == null) {
++                        this.plannedDetailTiles.remove(key, stride);
++                    } else {
++                        this.plannedDetailTiles.replace(key, stride, previousStride);
++                    }
++                    allScheduled = false;
++                }
++            }
++        }
++        return allScheduled;
++    }
++
++    private static long minimumDistanceSquaredToRegion(int centerX, int centerZ,
++                                                       int regionX, int regionZ, int sizeChunks) {
++        int minX = regionX * sizeChunks;
++        int maxX = minX + sizeChunks - 1;
++        int minZ = regionZ * sizeChunks;
++        int maxZ = minZ + sizeChunks - 1;
 +        long dx = centerX < minX ? (long) minX - centerX : centerX > maxX ? (long) centerX - maxX : 0L;
 +        long dz = centerZ < minZ ? (long) minZ - centerZ : centerZ > maxZ ? (long) centerZ - maxZ : 0L;
 +        return dx * dx + dz * dz;
 +    }
 +
-+    private static long maximumDistanceSquaredToTile(int centerX, int centerZ, int tileX, int tileZ) {
-+        int minX = tileX * COARSE_TILE_CHUNKS;
-+        int maxX = minX + COARSE_TILE_CHUNKS - 1;
-+        int minZ = tileZ * COARSE_TILE_CHUNKS;
-+        int maxZ = minZ + COARSE_TILE_CHUNKS - 1;
-+        long dx = Math.max(Math.abs((long) centerX - minX), Math.abs((long) centerX - maxX));
-+        long dz = Math.max(Math.abs((long) centerZ - minZ), Math.abs((long) centerZ - maxZ));
-+        return dx * dx + dz * dz;
++    private static long minimumDistanceSquaredToTile(int centerX, int centerZ, int tileX, int tileZ) {
++        return minimumDistanceSquaredToRegion(centerX, centerZ, tileX, tileZ, COARSE_TILE_CHUNKS);
 +    }
 +
 +    private static void generateCoarseTile(Binding binding, int tileX, int tileZ) {
@@ -740,6 +820,61 @@ index 00000000..64fc24da
 +    }
 +
 +    private void generateChunk(Binding binding, long key, int chunkX, int chunkZ, int stride) {
++        Int2ObjectOpenHashMap<VoxelizedSection> sections = buildChunkSections(
++                binding, chunkX, chunkZ, stride);
++        if (sections.isEmpty()
++                || !Integer.valueOf(stride).equals(this.plannedStrides.get(key))
++                || hasExistingData(binding.world, chunkX, chunkZ, sections.keySet())) {
++            return;
++        }
++        for (VoxelizedSection section : sections.values()) {
++            WorldUpdater.insertUpdate(binding.world, section);
++        }
++    }
++
++    private void generateDetailTile(Binding binding, long tileKey, int tileX, int tileZ, int stride) {
++        List<BuiltChunk> chunks = new ArrayList<>(DETAIL_TILE_CHUNKS * DETAIL_TILE_CHUNKS);
++        int originChunkX = tileX * DETAIL_TILE_CHUNKS;
++        int originChunkZ = tileZ * DETAIL_TILE_CHUNKS;
++
++        for (int localZ = 0; localZ < DETAIL_TILE_CHUNKS; localZ++) {
++            for (int localX = 0; localX < DETAIL_TILE_CHUNKS; localX++) {
++                if (this.binding != binding
++                        || !Integer.valueOf(stride).equals(this.plannedDetailTiles.get(tileKey))) {
++                    return;
++                }
++                int chunkX = originChunkX + localX;
++                int chunkZ = originChunkZ + localZ;
++                Int2ObjectOpenHashMap<VoxelizedSection> sections = buildChunkSections(
++                        binding, chunkX, chunkZ, stride);
++                if (!sections.isEmpty()) {
++                    chunks.add(new BuiltChunk(chunkX, chunkZ, sections));
++                }
++            }
++        }
++
++        if (this.binding != binding
++                || !Integer.valueOf(stride).equals(this.plannedDetailTiles.get(tileKey))) {
++            return;
++        }
++
++        // Keep the coarse parent mesh active while a complete 16 by 16-chunk
++        // child region is committed. Publishing only after the batch prevents
++        // partially generated children from punching rectangular holes in it.
++        WorldUpdater.DeferredUpdate deferred = new WorldUpdater.DeferredUpdate();
++        for (BuiltChunk chunk : chunks) {
++            if (hasExistingData(binding.world, chunk.chunkX(), chunk.chunkZ(), chunk.sections().keySet())) {
++                continue;
++            }
++            for (VoxelizedSection section : chunk.sections().values()) {
++                WorldUpdater.insertUpdate(binding.world, section, deferred);
++            }
++        }
++        deferred.publish(binding.world);
++    }
++
++    private static Int2ObjectOpenHashMap<VoxelizedSection> buildChunkSections(
++            Binding binding, int chunkX, int chunkZ, int stride) {
 +        int cells = 16 / stride;
 +        int sampleWidth = cells + 2;
 +        Sample[] samples = new Sample[sampleWidth * sampleWidth];
@@ -805,16 +940,10 @@ index 00000000..64fc24da
 +            addVegetation(binding, mapper, sections, chunkX, chunkZ, columns, maxY);
 +        }
 +
-+        if (sections.isEmpty()
-+                || !Integer.valueOf(stride).equals(this.plannedStrides.get(key))
-+                || hasExistingData(binding.world, chunkX, chunkZ, sections.keySet())) {
-+            return;
-+        }
-+
 +        for (VoxelizedSection section : sections.values()) {
 +            WorldVoxilizedSectionMipper.mipSection(section, mapper);
-+            WorldUpdater.insertUpdate(binding.world, section);
 +        }
++        return sections;
 +    }
 +
 +    private static Sample sample(Binding binding, int blockX, int blockZ, int minY, int maxY) {
@@ -1311,6 +1440,24 @@ index 00000000..64fc24da
 +        return 8;
 +    }
 +
++    private static int progressiveStrideForDistance(int distanceSquared,
++                                                    int innerRadius, int outerRadius) {
++        int maximum = sanitizeStride(VoxyConfig.CONFIG.seedLodSampleStride);
++        if (maximum == 2) {
++            return 2;
++        }
++        double distance = Math.sqrt(distanceSquared);
++        double range = Math.max(1.0, outerRadius - innerRadius);
++        double progress = Math.max(0.0, Math.min(1.0, (distance - innerRadius) / range));
++        if (progress < 0.28) {
++            return 2;
++        }
++        if (maximum == 4 || progress < 0.68) {
++            return 4;
++        }
++        return 8;
++    }
++
 +    private static Offset squareSpiral(long index) {
 +        if (index == 0) {
 +            return new Offset(0, 0);
@@ -1334,6 +1481,7 @@ index 00000000..64fc24da
 +        this.executor.shutdownNow();
 +        this.plannedStrides.clear();
 +        this.plannedCoarseTiles.clear();
++        this.plannedDetailTiles.clear();
 +    }
 +
 +    private static final class Binding {
@@ -1357,6 +1505,8 @@ index 00000000..64fc24da
 +    }
 +    private record SurfaceKey(String biomeId, int altitudeBand, boolean ocean) {}
 +    private record SurfaceMaterial(BlockState surface, BlockState floor) {}
++    private record BuiltChunk(int chunkX, int chunkZ,
++                              Int2ObjectOpenHashMap<VoxelizedSection> sections) {}
 +    private record Sample(int surfaceY, int floorY, Holder<Biome> biome,
 +                          BlockState surfaceBlock, BlockState floorBlock) {
 +        boolean isOcean() {
@@ -1384,8 +1534,130 @@ index 00000000..64fc24da
 +        }
 +    }
 +}
+diff --git a/src/main/java/me/cortex/voxy/common/world/WorldEngine.java b/src/main/java/me/cortex/voxy/common/world/WorldEngine.java
+index 01add640..b6803672 100644
+--- a/src/main/java/me/cortex/voxy/common/world/WorldEngine.java
++++ b/src/main/java/me/cortex/voxy/common/world/WorldEngine.java
+@@ -117,6 +117,25 @@ public final class WorldEngine {
+     }
+ 
+     public void markDirty(WorldSection section, int changeState, int neighborMsk) {
++        this.publishDirtyEvent(section, changeState, neighborMsk);
++        if ((changeState&UPDATE_TYPE_DONT_SAVE)==0) {
++            section.markDirty();
++        }
++    }
++
++    /**
++     * Marks data for persistence without exposing an incomplete hierarchy to
++     * the renderer. The caller must later invoke {@link #publishDirtyEvent}.
++     */
++    public void markDirtyDeferred(WorldSection section) {
++        if (!this.isLive) throw new IllegalStateException("World is not live");
++        if (section.tracker != this.sectionTracker) {
++            throw new IllegalStateException("Section is not from here");
++        }
++        section.markDirty();
++    }
++
++    public void publishDirtyEvent(WorldSection section, int changeState, int neighborMsk) {
+         if (!this.isLive) throw new IllegalStateException("World is not live");
+         if (section.tracker != this.sectionTracker) {
+             throw new IllegalStateException("Section is not from here");
+@@ -124,9 +143,6 @@ public final class WorldEngine {
+         if (this.dirtyCallback != null) {
+             this.dirtyCallback.accept(section, changeState, neighborMsk);
+         }
+-        if ((changeState&UPDATE_TYPE_DONT_SAVE)==0) {
+-            section.markDirty();
+-        }
+     }
+ 
+     public void addDebugData(List<String> debug) {
+diff --git a/src/main/java/me/cortex/voxy/common/world/WorldUpdater.java b/src/main/java/me/cortex/voxy/common/world/WorldUpdater.java
+index 1ab705b9..4e10fec7 100644
+--- a/src/main/java/me/cortex/voxy/common/world/WorldUpdater.java
++++ b/src/main/java/me/cortex/voxy/common/world/WorldUpdater.java
+@@ -4,6 +4,10 @@ import me.cortex.voxy.common.voxelization.VoxelizedSection;
+ import me.cortex.voxy.common.world.other.Mapper;
+ import me.cortex.voxy.commonImpl.VoxyCommon;
+ 
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.Map;
++
+ import static me.cortex.voxy.common.world.WorldEngine.*;
+ 
+ public class WorldUpdater {
+@@ -11,6 +15,10 @@ public class WorldUpdater {
+ 
+     //NOTE: THIS RUNS ON THE THREAD IT WAS EXECUTED ON, when this method exits, the calling method may assume that VoxelizedSection is no longer needed
+     public static void insertUpdate(WorldEngine into, VoxelizedSection section) {//TODO: add a bitset of levels to update and if it should force update
++        insertUpdate(into, section, null);
++    }
++
++    public static void insertUpdate(WorldEngine into, VoxelizedSection section, DeferredUpdate deferred) {
+ 
+         //Do some very cheeky stuff for MiB
+         if (VoxyCommon.IS_MINE_IN_ABYSS) {
+@@ -61,7 +69,14 @@ public class WorldUpdater {
+                     neighbors |= ((section.z^(section.z+1))>>(lvl+1))==0?0:1<<5;//+z
+                 }
+ 
+-                into.markDirty(worldSection, (didStateChange?UPDATE_TYPE_BLOCK_BIT:0)|(emptinessStateChange!=0?UPDATE_TYPE_CHILD_EXISTENCE_BIT:0), neighbors);
++                int flags = (didStateChange?UPDATE_TYPE_BLOCK_BIT:0)
++                        | (emptinessStateChange!=0?UPDATE_TYPE_CHILD_EXISTENCE_BIT:0);
++                if (deferred == null) {
++                    into.markDirty(worldSection, flags, neighbors);
++                } else {
++                    into.markDirtyDeferred(worldSection);
++                    deferred.record(worldSection.key, flags, neighbors);
++                }
+             }
+ 
+             //Need to release the section after using it
+@@ -89,6 +104,39 @@ public class WorldUpdater {
+         }
+     }
+ 
++    /**
++     * Coalesces renderer notifications while a complete replacement region is
++     * inserted. World data is persisted normally, but the old parent mesh stays
++     * visible until {@link #publish(WorldEngine)} exposes the finished children.
++     */
++    public static final class DeferredUpdate {
++        private final Map<Long, Long> changes = new HashMap<>();
++
++        private void record(long sectionKey, int flags, int neighbors) {
++            long packed = Integer.toUnsignedLong(flags) | (Integer.toUnsignedLong(neighbors) << 32);
++            this.changes.merge(sectionKey, packed, (left, right) -> left | right);
++        }
++
++        public void publish(WorldEngine world) {
++            var orderedChanges = new ArrayList<>(this.changes.entrySet());
++            orderedChanges.sort((left, right) -> Integer.compare(
++                    getLevel(left.getKey()), getLevel(right.getKey())));
++            for (Map.Entry<Long, Long> entry : orderedChanges) {
++                WorldSection section = world.acquireIfExists(entry.getKey());
++                if (section == null) {
++                    continue;
++                }
++                try {
++                    long packed = entry.getValue();
++                    world.publishDirtyEvent(section, (int) packed, (int) (packed >>> 32));
++                } finally {
++                    section.release();
++                }
++            }
++            this.changes.clear();
++        }
++    }
++
+ 
+     private static long insertSectionLvlIntoWorld(VoxelizedSection section, WorldSection worldSection) {
+         final long[] vdat = section.section;
 diff --git a/src/main/resources/assets/voxy/lang/en_us.json b/src/main/resources/assets/voxy/lang/en_us.json
-index 08d1299b..f118bb7d 100644
+index 08d1299b..24135aff 100644
 --- a/src/main/resources/assets/voxy/lang/en_us.json
 +++ b/src/main/resources/assets/voxy/lang/en_us.json
 @@ -16,6 +16,36 @@
@@ -1401,14 +1673,14 @@ index 08d1299b..f118bb7d 100644
 +  "voxy.config.general.seed_lod_sparse_loading": "Instant sparse loading",
 +  "voxy.config.general.seed_lod_sparse_loading.tooltip": "Fills the complete distance first with persistent 32-block samples in 512-block Voxy tiles, then refines only the configured detail distance. Disable to generate detailed predicted chunks across the entire radius.",
 +
-+  "voxy.config.general.seed_lod_sparse_detail_distance": "Sparse detail distance",
-+  "voxy.config.general.seed_lod_sparse_detail_distance.tooltip": "Radius in chunks that receives detailed terrain, smoothing, water and predicted trees. Terrain beyond it keeps the much faster sparse representation.",
++  "voxy.config.general.seed_lod_sparse_detail_distance": "Progressive reconstruction distance",
++  "voxy.config.general.seed_lod_sparse_detail_distance.tooltip": "After the complete low-quality world appears, aligned regions inside this radius are reconstructed at stride 2 nearby, stride 4 at medium range and up to stride 8 farther away. The barely visible horizon stays sparse.",
 +
 +  "voxy.config.general.seed_lod_stride": "Seed LOD maximum sample stride",
 +  "voxy.config.general.seed_lod_stride.tooltip": "Farthest terrain sampling interval. With adaptive quality enabled, closer predictions automatically use stride 2 or 4.",
 +
 +  "voxy.config.general.seed_lod_adaptive_quality": "Adaptive seed LOD quality",
-+  "voxy.config.general.seed_lod_adaptive_quality.tooltip": "Uses stride 2 near the normal render boundary, stride 4 at medium range, and the configured maximum stride far away.",
++  "voxy.config.general.seed_lod_adaptive_quality.tooltip": "Controls distance-based quality for legacy full-radius generation. Instant sparse loading always reconstructs its detail region progressively using stride 2 nearby, stride 4 at medium distance and the configured maximum farther away.",
 +
 +  "voxy.config.general.seed_lod_smoothing": "Smooth sampled terrain",
 +  "voxy.config.general.seed_lod_smoothing.tooltip": "Reconstructs smooth one-block terrain columns between sparse seed samples. Abrupt height changes remain cliff-like.",
