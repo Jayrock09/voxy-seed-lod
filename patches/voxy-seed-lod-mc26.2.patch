@@ -30,7 +30,7 @@ index 66ee48a1..b9b2efc5 100644
 \ No newline at end of file
 +}*/
 diff --git a/gradle.properties b/gradle.properties
-index a25ea295..b1030e59 100644
+index a25ea295..4fd1c1bc 100644
 --- a/gradle.properties
 +++ b/gradle.properties
 @@ -29,6 +29,6 @@ nvidium_version=0.4.3-beta13-26.1
@@ -38,7 +38,7 @@ index a25ea295..b1030e59 100644
  
  # Mod Properties
 -mod_version = 0.2.19-beta
-+mod_version = 0.2.19-beta-seedlod.18
++mod_version = 0.2.19-beta-seedlod.19
  maven_group = me.cortex
 -archives_base_name = voxy
 \ No newline at end of file
@@ -220,10 +220,10 @@ index a902a578..9644f746 100644
 \ No newline at end of file
 +}
 diff --git a/src/main/java/me/cortex/voxy/client/config/VoxyConfig.java b/src/main/java/me/cortex/voxy/client/config/VoxyConfig.java
-index b2f5eefb..d854da70 100644
+index b2f5eefb..9c124524 100644
 --- a/src/main/java/me/cortex/voxy/client/config/VoxyConfig.java
 +++ b/src/main/java/me/cortex/voxy/client/config/VoxyConfig.java
-@@ -35,6 +35,19 @@ public class VoxyConfig {
+@@ -35,6 +35,21 @@ public class VoxyConfig {
      public float subDivisionSize = 64;
      public String fogMode;
      public boolean dontUseSodiumBuilderThreads = false;
@@ -232,6 +232,8 @@ index b2f5eefb..d854da70 100644
 +    public int seedLodMinimumSampleStride = 4;
 +    public int seedLodSampleStride = 64;
 +    public boolean seedLodAdaptiveQuality = true;
++    public boolean seedLodAutomaticQualityTarget = false;
++    public int seedLodTargetGenerationSeconds = 30;
 +    public int seedLodQualityDropoff = 32;
 +    public boolean seedLodSmoothing = true;
 +    public boolean seedLodNSizedGeneration = true;
@@ -244,10 +246,10 @@ index b2f5eefb..d854da70 100644
  
      public SSAO.SSAOMode getSSAOMode() {
 diff --git a/src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java b/src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java
-index d456e55c..f779c2e7 100644
+index d456e55c..30310612 100644
 --- a/src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java
 +++ b/src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java
-@@ -79,6 +79,87 @@ public class VoxyConfigMenu implements ConfigEntryPoint {
+@@ -79,6 +79,100 @@ public class VoxyConfigMenu implements ConfigEntryPoint {
                                          ()->CFG.ingestEnabled, v->CFG.ingestEnabled=v)
                          )
                  ).setEnabler("voxy:enabled"),
@@ -267,6 +269,19 @@ index d456e55c..f779c2e7 100644
 +                                        "voxy:seed_lod_adaptive_quality",
 +                                        Component.translatable("voxy.config.general.seed_lod_adaptive_quality"),
 +                                        ()->CFG.seedLodAdaptiveQuality, v->CFG.seedLodAdaptiveQuality=v)
++                                        .setImpact(OptionImpact.HIGH),
++                                new BoolOption(
++                                        "voxy:seed_lod_automatic_quality_target",
++                                        Component.translatable("voxy.config.general.seed_lod_automatic_quality_target"),
++                                        ()->CFG.seedLodAutomaticQualityTarget,
++                                        v->CFG.seedLodAutomaticQualityTarget=v)
++                                        .setImpact(OptionImpact.HIGH),
++                                new IntOption(
++                                        "voxy:seed_lod_target_generation_seconds",
++                                        Component.translatable("voxy.config.general.seed_lod_target_generation_seconds"),
++                                        ()->Math.max(15, Math.min(120, CFG.seedLodTargetGenerationSeconds)),
++                                        v->CFG.seedLodTargetGenerationSeconds=v,
++                                        new Range(15, 120, 5))
 +                                        .setImpact(OptionImpact.HIGH),
 +                                new IntOption(
 +                                        "voxy:seed_lod_minimum_stride",
@@ -337,10 +352,10 @@ index d456e55c..f779c2e7 100644
                                  new BoolOption(
 diff --git a/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java
 new file mode 100644
-index 00000000..4b02a739
+index 00000000..f5d1c2b9
 --- /dev/null
 +++ b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java
-@@ -0,0 +1,1512 @@
+@@ -0,0 +1,1582 @@
 +package me.cortex.voxy.client.seedlod;
 +
 +import com.mojang.serialization.JsonOps;
@@ -437,7 +452,13 @@ index 00000000..4b02a739
 +    private int scannedMaximumStride = -1;
 +    private int scannedQualityDropoff = -1;
 +    private boolean scannedAdaptiveQuality;
++    private boolean scannedAutomaticQualityTarget;
++    private int scannedTargetGenerationSeconds = -1;
 +    private boolean scannedNSizedGeneration;
++    private int effectiveMaximumStride = 64;
++    private boolean automaticQualityLocked;
++    private long automaticQualityStartNanos;
++    private String automaticQualityStatus = "manual";
 +    private boolean stopped;
 +
 +    public SeedLodManager(Path storageBasePath) {
@@ -506,6 +527,7 @@ index 00000000..4b02a739
 +            this.scannedMinimumStride = -1;
 +            this.scannedMaximumStride = -1;
 +            this.scannedQualityDropoff = -1;
++            this.scannedTargetGenerationSeconds = -1;
 +            this.scanGeneration++;
 +        }
 +
@@ -530,20 +552,29 @@ index 00000000..4b02a739
 +            this.waveRing = 0;
 +            this.scanInitialized = true;
 +            this.waveScanFinished = false;
++            if (!this.automaticQualityLocked) {
++                this.automaticQualityStartNanos = System.nanoTime();
++            }
 +        }
 +
 +        int targetRadius = Math.max(32, VoxyConfig.CONFIG.seedLodRenderDistance);
 +        int minimumStride = sanitizeMinimumStride(
 +                VoxyConfig.CONFIG.seedLodMinimumSampleStride);
-+        int maximumStride = sanitizeMaximumStride(VoxyConfig.CONFIG.seedLodSampleStride);
++        int configuredMaximumStride = sanitizeMaximumStride(VoxyConfig.CONFIG.seedLodSampleStride);
 +        int qualityDropoff = sanitizeQualityDropoff(VoxyConfig.CONFIG.seedLodQualityDropoff);
 +        boolean adaptiveQuality = VoxyConfig.CONFIG.seedLodAdaptiveQuality;
++        boolean automaticQuality = VoxyConfig.CONFIG.seedLodAutomaticQualityTarget
++                && adaptiveQuality;
++        int targetGenerationSeconds = Math.max(15, Math.min(120,
++                VoxyConfig.CONFIG.seedLodTargetGenerationSeconds));
 +        boolean nSizedGeneration = VoxyConfig.CONFIG.seedLodNSizedGeneration;
 +        if (this.scannedTargetRadius != targetRadius
 +                || this.scannedMinimumStride != minimumStride
-+                || this.scannedMaximumStride != maximumStride
++                || this.scannedMaximumStride != configuredMaximumStride
 +                || this.scannedQualityDropoff != qualityDropoff
 +                || this.scannedAdaptiveQuality != adaptiveQuality
++                || this.scannedAutomaticQualityTarget != automaticQuality
++                || this.scannedTargetGenerationSeconds != targetGenerationSeconds
 +                || this.scannedNSizedGeneration != nSizedGeneration) {
 +            if (this.scannedTargetRadius != -1
 +                    && this.scannedNSizedGeneration != nSizedGeneration) {
@@ -553,10 +584,16 @@ index 00000000..4b02a739
 +            this.waveScanFinished = false;
 +            this.scannedTargetRadius = targetRadius;
 +            this.scannedMinimumStride = minimumStride;
-+            this.scannedMaximumStride = maximumStride;
++            this.scannedMaximumStride = configuredMaximumStride;
 +            this.scannedQualityDropoff = qualityDropoff;
 +            this.scannedAdaptiveQuality = adaptiveQuality;
++            this.scannedAutomaticQualityTarget = automaticQuality;
++            this.scannedTargetGenerationSeconds = targetGenerationSeconds;
 +            this.scannedNSizedGeneration = nSizedGeneration;
++            this.effectiveMaximumStride = configuredMaximumStride;
++            this.automaticQualityLocked = !automaticQuality;
++            this.automaticQualityStartNanos = System.nanoTime();
++            this.automaticQualityStatus = automaticQuality ? "calibrating" : "manual";
 +            this.scanGeneration++;
 +        }
 +        if (this.waveScanFinished) {
@@ -567,6 +604,12 @@ index 00000000..4b02a739
 +        int centerTileX = Math.floorDiv(this.scanCenterX, WAVE_TILE_CHUNKS);
 +        int centerTileZ = Math.floorDiv(this.scanCenterZ, WAVE_TILE_CHUNKS);
 +        int tileRadius = Math.floorDiv(targetRadius + WAVE_TILE_CHUNKS - 1, WAVE_TILE_CHUNKS) + 1;
++        if (this.maybeAdjustAutomaticQuality(client, tileRadius,
++                targetGenerationSeconds, automaticQuality)) {
++            return;
++        }
++        int maximumStride = automaticQuality
++                ? this.effectiveMaximumStride : configuredMaximumStride;
 +        long targetSquared = (long) targetRadius * targetRadius;
 +        int enqueued = 0;
 +        while (this.waveRing <= tileRadius) {
@@ -586,7 +629,8 @@ index 00000000..4b02a739
 +                }
 +
 +                int stride = strideForDistance(
-+                        (int) Math.min(Integer.MAX_VALUE, distanceSquared), qualityDropoff);
++                        (int) Math.min(Integer.MAX_VALUE, distanceSquared), qualityDropoff,
++                        minimumStride, maximumStride, adaptiveQuality);
 +                int outputLevel = nSizedGeneration ? outputLevelForStride(stride) : 0;
 +                WorkKey key = workKeyForTile(tileX, tileZ, outputLevel);
 +                Integer completedStride = this.completedWork.get(key);
@@ -693,6 +737,38 @@ index 00000000..4b02a739
 +            this.executor.setCorePoolSize(desired);
 +            this.executor.setMaximumPoolSize(desired);
 +        }
++    }
++
++    private boolean maybeAdjustAutomaticQuality(Minecraft client, int tileRadius,
++                                                int targetSeconds, boolean enabled) {
++        if (!enabled || this.automaticQualityLocked) return false;
++        int calibrationRing = Math.max(6, Math.min(24, tileRadius / 10));
++        long elapsedNanos = System.nanoTime() - this.automaticQualityStartNanos;
++        if (this.waveRing < calibrationRing || elapsedNanos < 2_000_000_000L) return false;
++
++        double progress = Math.min(0.95,
++                (this.waveRing + 1.0) / Math.max(1.0, tileRadius + 1.0));
++        // The inner calibration rings are more expensive than the coarse outer
++        // rings. A conservative 0.65 correction avoids over-degrading quality.
++        double projectedSeconds = elapsedNanos / 1_000_000_000.0
++                / (progress * progress) * 0.65;
++        int previous = this.effectiveMaximumStride;
++        int recommended = SeedLodAutoQuality.recommend(
++                previous, projectedSeconds, targetSeconds);
++        this.automaticQualityLocked = true;
++        this.automaticQualityStatus = String.format(Locale.ROOT,
++                "locked %d (projected %.0fs / target %ds)",
++                recommended, projectedSeconds, targetSeconds);
++        if (recommended == previous) return false;
++
++        this.effectiveMaximumStride = recommended;
++        this.waveRing = 0;
++        this.waveScanFinished = false;
++        this.scanGeneration++;
++        client.gui.chatListener().handleSystemMessage(Component.literal(String.format(Locale.ROOT,
++                "Seed LOD automatic quality selected outer stride %d (projected %.0fs, target %ds)",
++                recommended, projectedSeconds, targetSeconds)), false);
++        return true;
 +    }
 +
 +    private static long minimumDistanceSquaredToRegion(int centerX, int centerZ,
@@ -1576,10 +1652,12 @@ index 00000000..4b02a739
 +                Integer.numberOfTrailingZeros(sanitized) - 2);
 +    }
 +
-+    private static int strideForDistance(int distanceSquared, int qualityDropoff) {
-+        int minimum = sanitizeMinimumStride(VoxyConfig.CONFIG.seedLodMinimumSampleStride);
-+        int maximum = sanitizeMaximumStride(VoxyConfig.CONFIG.seedLodSampleStride);
-+        if (!VoxyConfig.CONFIG.seedLodAdaptiveQuality) {
++    private static int strideForDistance(int distanceSquared, int qualityDropoff,
++                                         int minimum, int maximum,
++                                         boolean adaptiveQuality) {
++        minimum = sanitizeMinimumStride(minimum);
++        maximum = sanitizeMaximumStride(maximum);
++        if (!adaptiveQuality) {
 +            return maximum;
 +        }
 +        int tier = Math.min(5, (int) (Math.sqrt(distanceSquared)
@@ -1638,14 +1716,18 @@ index 00000000..4b02a739
 +        long replacementVoxelBaseline = current == null ? 0L : current.realReplacementVoxelBaseline;
 +        var state = new SeedLodMetrics.RuntimeState(current != null && !this.stopped && VoxyConfig.CONFIG.seedLodEnabled,
 +                this.scannedTargetRadius < 0 ? 0 : this.scannedTargetRadius,
-+                strideForDistance(0, Math.max(4, this.scannedQualityDropoff)),
++                strideForDistance(0, Math.max(4, this.scannedQualityDropoff),
++                        Math.max(4, this.scannedMinimumStride),
++                        Math.max(32, this.effectiveMaximumStride),
++                        this.scannedAdaptiveQuality),
 +                this.waveRing, this.executor.getQueue().size(), this.executor.getActiveCount(),
 +                this.completedWork.size(), cacheEntries, memory,
 +                Math.max(0L, WorldUpdater.getSeedLodHierarchyRepairs() - repairBaseline),
 +                Math.max(0L, WorldUpdater.getSeedLodMaterializedChildren() - childBaseline),
 +                Math.max(0L, WorldUpdater.getSeedLodRealReplacementSections() - replacementSectionBaseline),
 +                Math.max(0L, WorldUpdater.getSeedLodRealReplacementVoxels() - replacementVoxelBaseline),
-+                current == null ? "none" : current.generatorFingerprint.substring(0, 8));
++                current == null ? "none" : current.generatorFingerprint.substring(0, 8),
++                this.effectiveMaximumStride, this.automaticQualityStatus);
 +        return this.metrics.snapshot(state);
 +    }
 +
@@ -1716,7 +1798,10 @@ index 00000000..4b02a739
 +                        this.playerChunkX, this.playerChunkZ, tileX, tileZ, WAVE_TILE_CHUNKS);
 +                if (distanceSquared > targetSquared) continue;
 +                int stride = strideForDistance((int) Math.min(Integer.MAX_VALUE, distanceSquared),
-+                        Math.max(4, this.scannedQualityDropoff));
++                        Math.max(4, this.scannedQualityDropoff),
++                        Math.max(4, this.scannedMinimumStride),
++                        Math.max(32, this.effectiveMaximumStride),
++                        this.scannedAdaptiveQuality);
 +                int level = this.scannedNSizedGeneration ? outputLevelForStride(stride) : 0;
 +                WorkKey key = workKeyForTile(tileX, tileZ, level);
 +                int state = 0;
@@ -2478,7 +2563,7 @@ index 1ab705b9..50f35cbb 100644
 +    }
  }
 diff --git a/src/main/resources/assets/voxy/lang/en_us.json b/src/main/resources/assets/voxy/lang/en_us.json
-index 08d1299b..b2d02387 100644
+index 08d1299b..0bff2eb6 100644
 --- a/src/main/resources/assets/voxy/lang/en_us.json
 +++ b/src/main/resources/assets/voxy/lang/en_us.json
 @@ -3,6 +3,7 @@
@@ -2489,7 +2574,7 @@ index 08d1299b..b2d02387 100644
  
    "voxy.config.general.enabled": "Enable Voxy",
    "voxy.config.general.enabled.tooltip": "Fully enables or disables voxy",
-@@ -16,6 +17,43 @@
+@@ -16,6 +17,49 @@
    "voxy.config.general.ingest": "Chunk Ingest",
    "voxy.config.general.ingest.tooltip": "Enables or disables voxies ability to convert new chunks into LoDs",
  
@@ -2504,6 +2589,12 @@ index 08d1299b..b2d02387 100644
 +
 +  "voxy.config.general.seed_lod_adaptive_quality": "Adaptive seed LOD quality",
 +  "voxy.config.general.seed_lod_adaptive_quality.tooltip": "Starts at the configured minimum stride near the player and doubles the sampling interval at each quality band until reaching the configured maximum.",
++
++  "voxy.config.general.seed_lod_automatic_quality_target": "Automatic outer quality target",
++  "voxy.config.general.seed_lod_automatic_quality_target.tooltip": "Measures the first completed rings once per world and adjusts only the farthest maximum stride to approach the target time. Nearby minimum stride and quality-band width stay unchanged.",
++
++  "voxy.config.general.seed_lod_target_generation_seconds": "Target horizon generation time",
++  "voxy.config.general.seed_lod_target_generation_seconds.tooltip": "Desired time from 15 to 120 seconds for the initial configured horizon. Automatic targeting uses wide hysteresis and makes at most one outer-stride adjustment per world binding.",
 +
 +  "voxy.config.general.seed_lod_minimum_stride": "Seed LOD minimum sample stride",
 +  "voxy.config.general.seed_lod_minimum_stride.tooltip": "Starting adaptive sampling interval from 4 to 16 blocks. Stride 4 gives the best nearby predictions. Stride 16 starts N-sized generation immediately for maximum speed. Ignored when adaptive quality is disabled.",
@@ -2533,7 +2624,7 @@ index 08d1299b..b2d02387 100644
    "voxy.config.general.rendering": "Voxy Rendering",
    "voxy.config.general.rendering.tooltip": "Enables or disables voxy rendering",
  
-@@ -38,4 +76,4 @@
+@@ -38,4 +82,4 @@
    "voxy.config.general.ssao_mode.basic": "Basic",
    "voxy.config.general.ssao_mode.better": "Better",
    "voxy.config.general.ssao_mode.best": "Best"

@@ -87,6 +87,15 @@ This project is unofficial, unsupported by MCRcortex, and not affiliated with Mo
 - Predictions outside the currently configured horizon are refreshed when that horizon is extended or the player moves into range.
 - The debug HUD and benchmark report show the first eight fingerprint characters so results from different datapack or generator configurations are easy to distinguish.
 
+### Automatic outer-quality target
+
+- Enable `Automatic outer quality target` to let Seed LOD calibrate once from the first completed inner rings.
+- Choose a target initial-horizon time from 15 to 120 seconds. The default target is 30 seconds.
+- The estimator can select outer stride 32, 64, or 128. It changes only the farthest stride cap, leaving nearby minimum quality and the configured band width untouched.
+- A wide hysteresis band and one-decision-per-world rule prevent quality oscillation. If the choice changes, obsolete queued work is cancelled with the existing generation token and compatible completed inner work remains reusable.
+- The debug HUD reports `calibrating`, `manual`, or the locked stride with its projected and target times.
+- This option is disabled by default while real hardware and datapack benchmark results are collected.
+
 ### Terrain quality
 
 - Optional adaptive sampling starts at the configured minimum and progressively increases through power-of-two bands toward the configured horizon maximum.

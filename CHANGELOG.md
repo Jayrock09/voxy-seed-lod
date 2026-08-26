@@ -1,6 +1,19 @@
 # Changelog
 
-## seedlod.18: current patch
+## seedlod.19: current patch
+
+- Added an opt-in automatic outer-quality target with a configurable 15 to 120 second initial-horizon goal.
+- Calibrates from completed inner generation rings and estimates total horizon time from radial area progress.
+- Applies a conservative correction because outer N-sized rings are cheaper than the high-quality calibration area.
+- Makes at most one outer-stride decision per world binding with wide hysteresis, preventing continual quality oscillation or repeated rescheduling.
+- Slow projections can raise the farthest stride to 64 or 128. Fast projections can spend available time on stride 64 or 32.
+- Preserves the configured nearby minimum stride, adaptive band width, nearest-first scheduling, aligned N-sized section boundaries, and hierarchy fallback guarantees.
+- Cancels obsolete queued plans through the existing generation token only when the selected outer stride actually changes. Already completed compatible inner work is reused.
+- Added the effective outer stride and auto-quality state to the debug HUD.
+- Added three automatic-quality decision tests. The full suite now contains seventeen tests.
+- Automatic targeting is disabled by default until it has received broader gameplay testing.
+
+## seedlod.18
 
 - Added a generator and datapack fingerprint sidecar for each Voxy world identifier.
 - The fingerprint includes the world seed, prediction schema, generator and biome-source classes, generator codec data, sea level, vertical range, and deterministic terrain, biome, and surface probes spread across the world.
