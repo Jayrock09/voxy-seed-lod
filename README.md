@@ -99,6 +99,9 @@ This project is unofficial, unsupported by MCRcortex, and not affiliated with Mo
 ### Terrain quality
 
 - Optional adaptive sampling starts at the configured minimum and progressively increases through power-of-two bands toward the configured horizon maximum.
+- Nearby noise-based terrain can evaluate the active generator's real surface-rule graph for each requested lattice point. This improves datapack snowlines, beaches, badlands materials, rocky slopes, mud, podzol, terracotta, calcite, basalt, and other rule-selected blocks without generating complete chunks.
+- Native surface evaluation defaults to a 64-chunk radius and can be configured from 16 to 256 chunks. The fast cached material approximation remains active outside that radius.
+- A bounded virtual-chunk context supplies real preliminary-surface noise and lazy seed-backed heightmap answers. It never calls full noise fill, carvers, decoration, chunk registration, or chunk saving.
 - Optional terrain smoothing reconstructs continuous surfaces between sparse samples. The two nearest quality bands use one-block columns, while direct N-sized bands emit larger cells.
 - Large height changes use continuous slope-aware interpolation, keeping cliffs steep without creating stride-sized towers.
 - Most predicted terrain is only a four-block surface shell. A one-block reconstruction halo identifies exposed drops and extends only those visible cliff edges to the lower adjacent surface.
@@ -119,11 +122,13 @@ This project is unofficial, unsupported by MCRcortex, and not affiliated with Mo
 - Terrain shape and biome selection come from the active generator, so vanilla-style noise-settings datapacks participate automatically.
 - A fast datapack mode uses early-exit height queries instead of constructing a complete vertical noise column for every sample.
 - Fast mode requires one solid-surface height query per lattice point on both land and ocean.
+- Within the configured native-surface radius, noise-based generators use their actual `SurfaceRules` graph for top-material selection.
+- Native evaluation is per requested Seed LOD sample. It does not run Minecraft's complete surface stage across all 256 columns.
 - Custom-biome profiles are cached.
 - Biome tags, identifiers, climate, and placed-feature identifiers help infer proxy tree density and species.
-- Common vanilla-block surface themes such as grass, snow, stone, sand, gravel, mud, calcite, and basalt are approximated from biome metadata.
+- Outside the native radius, common vanilla-block surface themes such as grass, snow, stone, sand, gravel, mud, calcite, and basalt are approximated from biome metadata.
 
-This is useful for datapacks such as Tectonic, Terralith, and other vanilla-style terrain/biome packs, but it does not execute their complete surface-rule or configured-feature stages. Unusual surfaces and custom blocks may be approximated incorrectly.
+This is useful for datapacks such as Tectonic, Terralith, and other vanilla-style terrain/biome packs. Native surface rules substantially improve nearby material matching, but configured features and decoration are still represented by lightweight proxies. Custom generators that do not use `NoiseBasedChunkGenerator` retain the compatibility approximation path.
 
 ## Recommended starting settings
 
@@ -139,6 +144,8 @@ This is useful for datapacks such as Tectonic, Terralith, and other vanilla-styl
 | Smooth sampled terrain | On | Large quality gain for little additional sampling cost |
 | Predicted vegetation | On | Cheap visual proxies |
 | Fast datapack terrain sampling | On | Recommended for noise-settings datapacks |
+| Native surface rules | On | Uses the active noise generator's real surface rules near the player |
+| Native surface distance | `64` | Raise for more matching or lower to protect generation speed |
 
 The normal Voxy render distance must also be large enough to display the predicted range.
 
@@ -171,6 +178,7 @@ The largest savings happen at the horizon, which also contains most of the tiles
 - Redesigned trees perform more tiny hash checks but produce roughly the same amount of leaf geometry as the earlier proxy implementation.
 - A 1,024-chunk placement simulation averaged 3.95 vegetation candidates per chunk with no preferred local X/Z lane.
 - Fast datapack sampling is expected to improve expensive noise-datapack sampling by roughly 1.5 to 4 times compared with this patch's former full-column approach. This is an engineering estimate, not a universal benchmark.
+- Native surface evaluation adds a real `SurfaceRules` lookup plus lazy nearby height queries. The 256-entry virtual-context cache amortizes noise-context setup, while the configurable radius prevents that cost from spreading across the full horizon.
 - Tectonic and similar packs may remain slower than vanilla because their density functions are inherently more expensive.
 
 This is still not a custom planetary renderer. A 192-chunk radius contains roughly 115,000 chunk positions, and Voxy must still sample terrain, store sections, and build geometry. N-sized output removes most fine reconstruction at long distances, but exact speedups depend heavily on the generator, storage, CPU, and enabled vegetation.
@@ -196,6 +204,7 @@ Exact trees and structures would require most of Minecraft's generation pipeline
 - Direct N-sized generation is new experimental hierarchy code. Disable it if a renderer or storage compatibility problem appears
 - A 1024-chunk radius contains millions of chunk positions. The slider allows it, but generation time and cache usage remain substantial even at stride 128
 - Custom `ChunkGenerator` implementations fall back to the compatibility column path
+- Native surface rules currently apply to noise-based generators only and select top materials only. Exact configured features still require later virtual feature execution work
 - Experimental code: back up important worlds and Voxy caches
 
 ## Applying the patch
@@ -233,7 +242,7 @@ Do not delete the complete world folder.
 
 ## Verification
 
-The published patch version compiled successfully and passed Voxy's Gradle build, test task, resource processing, and access-widener validation before publication. Seedlod.14's parent-fallback repair still needs broad in-game runtime testing across movement, restarts, seeds, and datapacks.
+The published patch version compiled successfully and passed Voxy's Gradle build, test task, resource processing, and access-widener validation before publication. The native surface path and hierarchy repair still need broad in-game runtime testing across movement, restarts, seeds, and datapacks.
 
 ## Contributing
 
@@ -242,7 +251,7 @@ Please do improve it. In particular, an organic life form replacing the AI-slop 
 Useful contribution areas include:
 
 - Real profiling across vanilla, Tectonic, and Terralith seeds
-- Better generic surface-rule approximation
+- Broader native surface-rule compatibility and visual regression tests
 - More natural proxy vegetation without running full decoration
 - Safe structure-location silhouettes
 - Automated visual and cache-migration tests

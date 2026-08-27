@@ -1,6 +1,22 @@
 # Changelog
 
-## seedlod.19: current patch
+## seedlod.20: current patch
+
+- Added bounded native surface-rule evaluation for noise-based generators and datapacks.
+- Uses Minecraft's active `SurfaceRules` graph for requested nearby lattice samples instead of approximating every visible material from biome names.
+- Added a lightweight virtual `ProtoChunk` that supplies seed-backed heightmap queries and a real `NoiseChunk` context without calling `fillFromNoise`, registering chunks, saving chunks, running carvers, or running decoration.
+- Evaluates only the requested top material. It does not execute Minecraft's full 256-column surface pass or scan complete vertical chunk volumes.
+- Preserves slope-sensitive surface rules through lazy world-surface height queries cached per virtual chunk.
+- Added a bounded 256-entry native context cache and automatic heuristic fallback for unsupported generators or rule-evaluation failures.
+- Native surface rules default to enabled within 64 chunks. A new 16 to 256-chunk radius control lets users trade CPU time for closer datapack matching.
+- Keeps the fast biome-material approximation outside the native radius, preserving far-horizon generation speed.
+- Separates native and heuristic sample-cache entries so moving toward existing predictions can upgrade their materials correctly.
+- Changing native mode or its radius invalidates only predicted work and restarts the nearest-first wave. Real ingested chunks remain protected.
+- Added native-surface attempt and match counters to the debug HUD.
+- Added three boundary and capability policy tests. The full suite now contains twenty tests.
+- Increased the prediction schema version so older material approximations are refreshed safely.
+
+## seedlod.19
 
 - Added an opt-in automatic outer-quality target with a configurable 15 to 120 second initial-horizon goal.
 - Calibrates from completed inner generation rings and estimates total horizon time from radial area progress.
