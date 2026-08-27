@@ -1,6 +1,46 @@
 # Changelog
 
-## seedlod.20: current patch
+## seedlod.24: current patch
+
+- Added coordinated Custom, Fast Horizon, Balanced, Ultra, and Near-lossless quality presets.
+- Each preset selects the complete pipeline together: near and far stride, adaptive band width, native surface radius, vegetation mode, native vegetation radius, and feature CPU budget.
+- Presets keep prediction distance and worker-thread count independent so they never silently expand the amount of requested world area or CPU concurrency.
+- Custom preserves every existing advanced control and is the migration-safe default for existing configurations.
+- Fast Horizon uses stride 8 through 128, proxy vegetation, approximate outer surfaces, and a 5 percent native-feature budget.
+- Balanced uses stride 4 through 64, 32-chunk quality bands, a 64-chunk native radius, hybrid vegetation, and a 15 percent budget.
+- Ultra uses stride 4 through 32, wider 64-chunk bands, a 128-chunk native radius, hybrid vegetation, and a 30 percent budget.
+- Near-lossless keeps the current supported minimum stride and maximum native radii, attempts supported native vegetation, and allows a 50 percent budget.
+- Added three preset-contract tests. The full suite now contains twenty-nine tests.
+
+## seedlod.23
+
+- Upgraded native vegetation from selecting one configured tree to executing supported biome `PlacedFeature` pipelines once per predicted chunk.
+- Placement modifiers receive deterministic chunk coordinates, the active world seed, the actual biome feature list, seed-backed height and biome queries, and a sparse writable virtual world.
+- Added capability-driven support for standard and datapack tree features, fallen trees, huge mushrooms, bamboo, huge fungus, and cactus-style simple or block-column features.
+- Selector and sequence wrappers are accepted only when their reachable configured features are all supported. Unknown feature graphs fail closed and use the existing proxy path.
+- Native feature writes are bounded to 16,384 sparse blocks and a 40-block horizontal reach to protect generation time and memory.
+- The virtual world never exposes the live chunk source. A feature that requires real chunks fails safely instead of loading distant chunks behind Seed LOD's back.
+- Supported successful feature passes that naturally place nothing are treated as accurate empty chunks instead of adding fake proxy trees.
+- Added three capability-policy tests covering accepted vegetation, bounded cactus handling, and rejection of underground features.
+
+## seedlod.22
+
+- Added Off, Proxy, Hybrid, and Native-supported vegetation modes.
+- Hybrid runs supported native vegetation inside a configurable 16 to 256-chunk radius and retains lightweight silhouettes beyond it.
+- Added a rolling native-feature CPU budget from 1 to 50 percent. Exhausted work falls back immediately instead of delaying the terrain wave.
+- Added HUD counters for feature attempts, successful placements, unsupported graphs, execution time, and budget fallbacks.
+- Retained the old native-tree boolean as a configuration migration field.
+- Added three deterministic budget-window tests. The full suite reached twenty-three tests.
+
+## seedlod.21
+
+- Added the first sparse virtual `WorldGenLevel` feature sink for standard configured trees.
+- Native tree code reads seed-backed terrain and biome data and writes only into a bounded in-memory block map. It does not register, light, save, or retain Minecraft chunks.
+- Captured logs and leaves are inserted into Voxy predictions while underground feature writes are ignored by the surface-only pipeline.
+- Unsupported or failing feature graphs automatically use the existing deterministic proxy vegetation.
+- Added nearby native-tree distance control and runtime counters without changing the far-horizon terrain path.
+
+## seedlod.20
 
 - Added bounded native surface-rule evaluation for noise-based generators and datapacks.
 - Uses Minecraft's active `SurfaceRules` graph for requested nearby lattice samples instead of approximating every visible material from biome names.

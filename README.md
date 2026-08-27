@@ -117,6 +117,18 @@ This project is unofficial, unsupported by MCRcortex, and not affiliated with Mo
 - Placement is stable for a given seed but intentionally does not claim to reproduce Minecraft's exact decoration stage.
 - Tree density fades continuously with player distance and never reaches a hard zero ring. Very distant bands retain sparse silhouettes without an obvious forest border.
 
+### Sparse native vegetation and datapack features
+
+- A bounded virtual `WorldGenLevel` can execute supported biome placed-features without registering, lighting, saving, or retaining Minecraft chunks.
+- The virtual feature sink reads seed-backed terrain heights and biomes, captures only sparse block writes, and never exposes the integrated server's live chunk source.
+- Capability-driven support includes standard and datapack trees, fallen trees, huge mushrooms, bamboo, huge fungus, and cactus-style simple or block-column features.
+- Selector and sequence wrappers are accepted only when every reachable configured feature is supported. Unknown or incompatible graphs fail closed and use proxies.
+- Four vegetation modes are available: Off, Proxy, Hybrid, and Native supported. Hybrid uses native features nearby and proxies at long distance.
+- A rolling 1 to 50 percent CPU budget prevents native decoration from stalling terrain coverage. Exhausted work falls back immediately.
+- Feature execution is bounded to a sparse 16,384-block capture and a 40-block reach. Successful feature passes that place nothing remain empty rather than receiving a fake tree.
+
+This is still selective feature execution, not Minecraft's full decoration stage. Structures, ores, carvers, entities, block entities, neighbor-dependent features, and unsupported mod feature types are not run.
+
 ### Datapack awareness
 
 - Terrain shape and biome selection come from the active generator, so vanilla-style noise-settings datapacks participate automatically.
@@ -128,12 +140,25 @@ This project is unofficial, unsupported by MCRcortex, and not affiliated with Mo
 - Biome tags, identifiers, climate, and placed-feature identifiers help infer proxy tree density and species.
 - Outside the native radius, common vanilla-block surface themes such as grass, snow, stone, sand, gravel, mud, calcite, and basalt are approximated from biome metadata.
 
-This is useful for datapacks such as Tectonic, Terralith, and other vanilla-style terrain/biome packs. Native surface rules substantially improve nearby material matching, but configured features and decoration are still represented by lightweight proxies. Custom generators that do not use `NoiseBasedChunkGenerator` retain the compatibility approximation path.
+This is useful for datapacks such as Tectonic, Terralith, and other vanilla-style terrain/biome packs. Native surface rules improve nearby material matching, while supported placed-feature graphs can add their actual seed-driven vegetation. Unsupported decoration retains the lightweight proxy path. Custom generators that do not use `NoiseBasedChunkGenerator` retain the compatibility approximation path.
+
+### Coordinated quality presets
+
+| Preset | Stride | Band width | Native radius | Vegetation | Feature budget |
+|---|---:|---:|---:|---|---:|
+| Fast Horizon | 8 to 128 | 16 chunks | Approximate surfaces | Proxy | 5% |
+| Balanced | 4 to 64 | 32 chunks | 64 chunks | Hybrid | 15% |
+| Ultra | 4 to 32 | 64 chunks | 128 chunks | Hybrid | 30% |
+| Near-lossless | 4 to 32 | 64 chunks | 256 chunks | Native supported | 50% |
+| Custom | User controlled | User controlled | User controlled | User controlled | User controlled |
+
+Presets coordinate the full generation pipeline instead of changing one slider in isolation. Prediction distance and worker-thread count always remain independent. Custom is migration-safe and preserves the advanced controls already stored in `voxy-config.json`.
 
 ## Recommended starting settings
 
 | Setting | Recommendation | Notes |
 |---|---:|---|
+| Quality preset | `Balanced` | Use Custom to retain manual control of every setting |
 | Seed LOD distance | `192` | Radius in chunks |
 | Minimum adaptive stride | `4` | Best nearby predictions; use 8 or 16 only for faster initial coverage |
 | Maximum sample stride | `64` quality, `128` speed | Stride 128 cuts far-section seed queries but retains less terrain detail |
@@ -200,11 +225,12 @@ Exact trees and structures would require most of Minecraft's generation pipeline
 - Fabric API, Sodium, and the dependencies required by the matching Voxy development build
 - Single-player Overworld only
 - Multiplayer clients do not receive the server's complete seed/generator state
-- No exact structures, caves, decorations, player edits, or exact decorated trees
+- No exact structures, caves, complete decoration stage, player edits, or unsupported feature types
 - Direct N-sized generation is new experimental hierarchy code. Disable it if a renderer or storage compatibility problem appears
 - A 1024-chunk radius contains millions of chunk positions. The slider allows it, but generation time and cache usage remain substantial even at stride 128
 - Custom `ChunkGenerator` implementations fall back to the compatibility column path
-- Native surface rules currently apply to noise-based generators only and select top materials only. Exact configured features still require later virtual feature execution work
+- Native surface rules currently apply to noise-based generators only and select top materials only
+- Native placed-feature execution is deliberately capability-limited. Unsupported or chunk-dependent feature graphs use proxies
 - Experimental code: back up important worlds and Voxy caches
 
 ## Applying the patch
@@ -242,7 +268,7 @@ Do not delete the complete world folder.
 
 ## Verification
 
-The published patch version compiled successfully and passed Voxy's Gradle build, test task, resource processing, and access-widener validation before publication. The native surface path and hierarchy repair still need broad in-game runtime testing across movement, restarts, seeds, and datapacks.
+The published patch version compiled successfully and passed Voxy's Gradle build, 29-test suite, resource processing, and access-widener validation before publication. Native surface and feature paths still need broad in-game runtime testing across movement, restarts, seeds, and datapacks.
 
 ## Contributing
 

@@ -30,7 +30,7 @@ index 66ee48a1..b9b2efc5 100644
 \ No newline at end of file
 +}*/
 diff --git a/gradle.properties b/gradle.properties
-index a25ea295..9a20f177 100644
+index a25ea295..425b9e4c 100644
 --- a/gradle.properties
 +++ b/gradle.properties
 @@ -29,6 +29,6 @@ nvidium_version=0.4.3-beta13-26.1
@@ -38,7 +38,7 @@ index a25ea295..9a20f177 100644
  
  # Mod Properties
 -mod_version = 0.2.19-beta
-+mod_version = 0.2.19-beta-seedlod.20
++mod_version = 0.2.19-beta-seedlod.24
  maven_group = me.cortex
 -archives_base_name = voxy
 \ No newline at end of file
@@ -220,14 +220,24 @@ index a902a578..9644f746 100644
 \ No newline at end of file
 +}
 diff --git a/src/main/java/me/cortex/voxy/client/config/VoxyConfig.java b/src/main/java/me/cortex/voxy/client/config/VoxyConfig.java
-index b2f5eefb..ad3b4ac7 100644
+index b2f5eefb..a0e2478c 100644
 --- a/src/main/java/me/cortex/voxy/client/config/VoxyConfig.java
 +++ b/src/main/java/me/cortex/voxy/client/config/VoxyConfig.java
-@@ -35,6 +35,23 @@ public class VoxyConfig {
+@@ -6,6 +6,8 @@ import com.google.gson.GsonBuilder;
+ import com.google.gson.JsonParseException;
+ import me.cortex.voxy.client.core.NormalRenderPipeline;
+ import me.cortex.voxy.client.core.SSAO;
++import me.cortex.voxy.client.seedlod.SeedLodVegetationMode;
++import me.cortex.voxy.client.seedlod.SeedLodQualityPreset;
+ import me.cortex.voxy.common.Logger;
+ import me.cortex.voxy.common.util.cpu.CpuLayout;
+ import me.cortex.voxy.commonImpl.VoxyCommon;
+@@ -35,8 +37,116 @@ public class VoxyConfig {
      public float subDivisionSize = 64;
      public String fogMode;
      public boolean dontUseSodiumBuilderThreads = false;
 +    public boolean seedLodEnabled = false;
++    public String seedLodQualityPreset = "custom";
 +    public int seedLodRenderDistance = 192;
 +    public int seedLodMinimumSampleStride = 4;
 +    public int seedLodSampleStride = 64;
@@ -241,17 +251,143 @@ index b2f5eefb..ad3b4ac7 100644
 +    public boolean seedLodFastDatapackSampling = true;
 +    public boolean seedLodNativeSurfaceRules = true;
 +    public int seedLodNativeSurfaceDistance = 64;
++    public boolean seedLodNativeTrees = true;
++    public String seedLodVegetationMode = "hybrid";
++    public int seedLodNativeVegetationDistance = 96;
++    public int seedLodFeatureBudgetPercent = 15;
 +    public boolean seedLodDebugHud = false;
 +    public boolean seedLodDebugMap = false;
 +    public int seedLodThreads = Math.max(1, Math.min(2, CpuLayout.getCoreCount()/4));
      public String ssaoMode;
  
++    public SeedLodQualityPreset getSeedLodQualityPreset() {
++        if (this.seedLodQualityPreset == null) return SeedLodQualityPreset.CUSTOM;
++        try {
++            return SeedLodQualityPreset.valueOf(this.seedLodQualityPreset.toUpperCase(Locale.ROOT));
++        } catch (Exception ignored) {
++            return SeedLodQualityPreset.CUSTOM;
++        }
++    }
++
++    public void setSeedLodQualityPreset(SeedLodQualityPreset preset) {
++        this.seedLodQualityPreset = preset.name().toLowerCase(Locale.ROOT);
++    }
++
++    public int effectiveSeedLodMinimumStride() {
++        var preset = this.getSeedLodQualityPreset();
++        return preset == SeedLodQualityPreset.CUSTOM
++                ? this.seedLodMinimumSampleStride : preset.minimumStride();
++    }
++
++    public int effectiveSeedLodMaximumStride() {
++        var preset = this.getSeedLodQualityPreset();
++        return preset == SeedLodQualityPreset.CUSTOM
++                ? this.seedLodSampleStride : preset.maximumStride();
++    }
++
++    public int effectiveSeedLodQualityDropoff() {
++        var preset = this.getSeedLodQualityPreset();
++        return preset == SeedLodQualityPreset.CUSTOM
++                ? this.seedLodQualityDropoff : preset.qualityDropoff();
++    }
++
++    public boolean effectiveSeedLodAdaptiveQuality() {
++        return this.getSeedLodQualityPreset() == SeedLodQualityPreset.CUSTOM
++                ? this.seedLodAdaptiveQuality : true;
++    }
++
++    public boolean effectiveSeedLodAutomaticQualityTarget() {
++        return this.getSeedLodQualityPreset() == SeedLodQualityPreset.CUSTOM
++                && this.seedLodAutomaticQualityTarget;
++    }
++
++    public boolean effectiveSeedLodSmoothing() {
++        return this.getSeedLodQualityPreset() == SeedLodQualityPreset.CUSTOM
++                ? this.seedLodSmoothing : true;
++    }
++
++    public boolean effectiveSeedLodNSizedGeneration() {
++        return this.getSeedLodQualityPreset() == SeedLodQualityPreset.CUSTOM
++                ? this.seedLodNSizedGeneration : true;
++    }
++
++    public boolean effectiveSeedLodFastDatapackSampling() {
++        return this.getSeedLodQualityPreset() == SeedLodQualityPreset.CUSTOM
++                ? this.seedLodFastDatapackSampling : true;
++    }
++
++    public boolean effectiveSeedLodNativeSurfaceRules() {
++        return this.getSeedLodQualityPreset() == SeedLodQualityPreset.CUSTOM
++                ? this.seedLodNativeSurfaceRules
++                : this.getSeedLodQualityPreset() != SeedLodQualityPreset.FAST;
++    }
++
++    public int effectiveSeedLodNativeSurfaceDistance() {
++        var preset = this.getSeedLodQualityPreset();
++        return preset == SeedLodQualityPreset.CUSTOM
++                ? this.seedLodNativeSurfaceDistance : preset.nativeDistance();
++    }
++
++    public SeedLodVegetationMode effectiveSeedLodVegetationMode() {
++        var preset = this.getSeedLodQualityPreset();
++        return preset == SeedLodQualityPreset.CUSTOM
++                ? this.getSeedLodVegetationMode() : preset.vegetationMode();
++    }
++
++    public int effectiveSeedLodNativeVegetationDistance() {
++        var preset = this.getSeedLodQualityPreset();
++        return preset == SeedLodQualityPreset.CUSTOM
++                ? this.seedLodNativeVegetationDistance : preset.nativeDistance();
++    }
++
++    public int effectiveSeedLodFeatureBudgetPercent() {
++        var preset = this.getSeedLodQualityPreset();
++        return preset == SeedLodQualityPreset.CUSTOM
++                ? this.seedLodFeatureBudgetPercent : preset.featureBudgetPercent();
++    }
++
      public SSAO.SSAOMode getSSAOMode() {
+         var DEFAULT = SSAO.SSAOMode.AUTO;
+         if (this.ssaoMode == null) return DEFAULT;
+@@ -45,6 +155,24 @@ public class VoxyConfig {
+         } catch (Exception e) { return DEFAULT; }
+     }
+ 
++    public SeedLodVegetationMode getSeedLodVegetationMode() {
++        if (this.seedLodVegetationMode == null) {
++            return this.seedLodNativeTrees ? SeedLodVegetationMode.HYBRID
++                    : SeedLodVegetationMode.PROXY;
++        }
++        try {
++            return SeedLodVegetationMode.valueOf(this.seedLodVegetationMode.toUpperCase(Locale.ROOT));
++        } catch (Exception ignored) {
++            return SeedLodVegetationMode.HYBRID;
++        }
++    }
++
++    public void setSeedLodVegetationMode(SeedLodVegetationMode mode) {
++        this.seedLodVegetationMode = mode.name().toLowerCase(Locale.ROOT);
++        this.seedLodNativeTrees = mode == SeedLodVegetationMode.HYBRID
++                || mode == SeedLodVegetationMode.NATIVE;
++    }
++
+     public void setSSAOMode(SSAO.SSAOMode mode) {
+         this.ssaoMode = mode.name().toLowerCase(Locale.ROOT);
+     }
 diff --git a/src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java b/src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java
-index d456e55c..71a8ce06 100644
+index d456e55c..fa87f913 100644
 --- a/src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java
 +++ b/src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java
-@@ -79,6 +79,112 @@ public class VoxyConfigMenu implements ConfigEntryPoint {
+@@ -6,6 +6,8 @@ import me.cortex.voxy.client.core.IVoxyRenderSystemHolder;
+ import me.cortex.voxy.client.core.NormalRenderPipeline;
+ import me.cortex.voxy.client.core.SSAO;
+ import me.cortex.voxy.client.core.util.IrisUtil;
++import me.cortex.voxy.client.seedlod.SeedLodVegetationMode;
++import me.cortex.voxy.client.seedlod.SeedLodQualityPreset;
+ import me.cortex.voxy.common.util.cpu.CpuLayout;
+ import me.cortex.voxy.commonImpl.VoxyCommon;
+ import net.caffeinemc.mods.sodium.api.config.ConfigEntryPoint;
+@@ -79,6 +81,145 @@ public class VoxyConfigMenu implements ConfigEntryPoint {
                                          ()->CFG.ingestEnabled, v->CFG.ingestEnabled=v)
                          )
                  ).setEnabler("voxy:enabled"),
@@ -261,6 +397,15 @@ index d456e55c..71a8ce06 100644
 +                                        "voxy:seed_lod_enabled",
 +                                        Component.translatable("voxy.config.general.seed_lod_enabled"),
 +                                        ()->CFG.seedLodEnabled, v->CFG.seedLodEnabled=v),
++                                new EnumOption<>(
++                                        "voxy:seed_lod_quality_preset",
++                                        SeedLodQualityPreset.class,
++                                        Component.translatable("voxy.config.general.seed_lod_quality_preset"),
++                                        CFG::getSeedLodQualityPreset, CFG::setSeedLodQualityPreset)
++                                        .setNameProvider(c->Component.translatable(
++                                                "voxy.config.general.seed_lod_quality_preset."
++                                                        + c.name().toLowerCase(Locale.ROOT)))
++                                        .setImpact(OptionImpact.HIGH),
 +                                new IntOption(
 +                                        "voxy:seed_lod_distance",
 +                                        Component.translatable("voxy.config.general.seed_lod_distance"),
@@ -342,7 +487,31 @@ index d456e55c..71a8ce06 100644
 +                                        ()->Math.max(16, Math.min(256, CFG.seedLodNativeSurfaceDistance)),
 +                                        v->CFG.seedLodNativeSurfaceDistance=v,
 +                                        new Range(16, 256, 16))
-+                                        .setImpact(OptionImpact.MEDIUM)
++                                        .setImpact(OptionImpact.MEDIUM),
++                                new EnumOption<>(
++                                        "voxy:seed_lod_vegetation_mode",
++                                        SeedLodVegetationMode.class,
++                                        Component.translatable("voxy.config.general.seed_lod_vegetation_mode"),
++                                        CFG::getSeedLodVegetationMode, CFG::setSeedLodVegetationMode)
++                                        .setNameProvider(c->Component.translatable(
++                                                "voxy.config.general.seed_lod_vegetation_mode."
++                                                        + c.name().toLowerCase(Locale.ROOT)))
++                                        .setImpact(OptionImpact.HIGH),
++                                new IntOption(
++                                        "voxy:seed_lod_native_vegetation_distance",
++                                        Component.translatable("voxy.config.general.seed_lod_native_vegetation_distance"),
++                                        ()->Math.max(16, Math.min(256, CFG.seedLodNativeVegetationDistance)),
++                                        v->CFG.seedLodNativeVegetationDistance=v,
++                                        new Range(16, 256, 16))
++                                        .setImpact(OptionImpact.HIGH),
++                                new IntOption(
++                                        "voxy:seed_lod_feature_budget",
++                                        Component.translatable("voxy.config.general.seed_lod_feature_budget"),
++                                        ()->Math.max(1, Math.min(50, CFG.seedLodFeatureBudgetPercent)),
++                                        v->CFG.seedLodFeatureBudgetPercent=v,
++                                        new Range(1, 50, 1))
++                                        .setFormatter(v->Component.literal(v + "%"))
++                                        .setImpact(OptionImpact.HIGH)
 +                        ), new Group(
 +                                new IntOption(
 +                                        "voxy:seed_lod_threads",
@@ -460,10 +629,10 @@ index 00000000..9e5e4944
 +}
 diff --git a/src/main/java/me/cortex/voxy/client/seedlod/SeedLodDebugHud.java b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodDebugHud.java
 new file mode 100644
-index 00000000..b72517e3
+index 00000000..f7536af9
 --- /dev/null
 +++ b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodDebugHud.java
-@@ -0,0 +1,121 @@
+@@ -0,0 +1,124 @@
 +package me.cortex.voxy.client.seedlod;
 +
 +import me.cortex.voxy.client.VoxyClientInstance;
@@ -539,6 +708,9 @@ index 00000000..b72517e3
 +                snapshot.cacheHitPercent(), runtime.sampleCacheEntries()));
 +        lines.add(String.format(Locale.ROOT, "native surfaces %d/%d matched",
 +                snapshot.nativeSurfaceHits(), snapshot.nativeSurfaceAttempts()));
++        lines.add(String.format(Locale.ROOT, "native features %d/%d placed  budget fallbacks %d",
++                snapshot.nativeFeaturePlaced(), snapshot.nativeFeatureAttempts(),
++                snapshot.nativeFeatureBudgetFallbacks()));
 +        lines.add(String.format(Locale.ROOT, "queue latency %.1f ms  cancel/fail %d/%d",
 +                snapshot.averageQueueLatencyMillis(), snapshot.jobsCancelled(), snapshot.jobsFailed()));
 +        lines.add(String.format(Locale.ROOT, "teleport cancels %d  completed regions %d",
@@ -585,9 +757,49 @@ index 00000000..b72517e3
 +        return color;
 +    }
 +}
+diff --git a/src/main/java/me/cortex/voxy/client/seedlod/SeedLodFeatureBudget.java b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodFeatureBudget.java
+new file mode 100644
+index 00000000..31814add
+--- /dev/null
++++ b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodFeatureBudget.java
+@@ -0,0 +1,34 @@
++package me.cortex.voxy.client.seedlod;
++
++import java.util.concurrent.atomic.AtomicLong;
++
++final class SeedLodFeatureBudget {
++    private static final long WINDOW_NANOS = 1_000_000_000L;
++    private static final long MINIMUM_BURST_NANOS = 5_000_000L;
++
++    private final AtomicLong windowStart = new AtomicLong(System.nanoTime());
++    private final AtomicLong spentNanos = new AtomicLong();
++
++    boolean allow(int percent) {
++        int clamped = Math.max(1, Math.min(50, percent));
++        long now = System.nanoTime();
++        long start = this.windowStart.get();
++        long elapsed = Math.max(0L, now - start);
++        if (elapsed >= WINDOW_NANOS && this.windowStart.compareAndSet(start, now)) {
++            this.spentNanos.set(0L);
++            elapsed = 0L;
++        }
++        long allowance = allowance(elapsed, clamped);
++        return this.spentNanos.get() < allowance;
++    }
++
++    void record(long elapsedNanos) {
++        this.spentNanos.addAndGet(Math.max(0L, elapsedNanos));
++    }
++
++    static long allowance(long elapsedNanos, int percent) {
++        int clamped = Math.max(1, Math.min(50, percent));
++        return Math.max(MINIMUM_BURST_NANOS,
++                Math.max(0L, elapsedNanos) * clamped / 100L);
++    }
++}
 diff --git a/src/main/java/me/cortex/voxy/client/seedlod/SeedLodFingerprintStore.java b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodFingerprintStore.java
 new file mode 100644
-index 00000000..1f97da94
+index 00000000..87cc55ad
 --- /dev/null
 +++ b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodFingerprintStore.java
 @@ -0,0 +1,107 @@
@@ -610,7 +822,7 @@ index 00000000..1f97da94
 +/** Small sidecar used to detect world-generator changes without touching real Voxy data. */
 +public final class SeedLodFingerprintStore {
 +    static final int FORMAT_VERSION = 1;
-+    static final int PREDICTION_VERSION = 19;
++    static final int PREDICTION_VERSION = 23;
 +
 +    private SeedLodFingerprintStore() {}
 +
@@ -700,10 +912,10 @@ index 00000000..1f97da94
 +}
 diff --git a/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java
 new file mode 100644
-index 00000000..710c6c91
+index 00000000..ee560754
 --- /dev/null
 +++ b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java
-@@ -0,0 +1,1628 @@
+@@ -0,0 +1,1767 @@
 +package me.cortex.voxy.client.seedlod;
 +
 +import com.mojang.serialization.JsonOps;
@@ -805,6 +1017,10 @@ index 00000000..710c6c91
 +    private boolean scannedNSizedGeneration;
 +    private boolean scannedNativeSurfaceRules;
 +    private int scannedNativeSurfaceDistance = -1;
++    private boolean scannedNativeTrees;
++    private SeedLodVegetationMode scannedVegetationMode;
++    private int scannedNativeVegetationDistance = -1;
++    private int scannedFeatureBudgetPercent = -1;
 +    private int effectiveMaximumStride = 64;
 +    private boolean automaticQualityLocked;
 +    private long automaticQualityStartNanos;
@@ -911,18 +1127,26 @@ index 00000000..710c6c91
 +
 +        int targetRadius = Math.max(32, VoxyConfig.CONFIG.seedLodRenderDistance);
 +        int minimumStride = sanitizeMinimumStride(
-+                VoxyConfig.CONFIG.seedLodMinimumSampleStride);
-+        int configuredMaximumStride = sanitizeMaximumStride(VoxyConfig.CONFIG.seedLodSampleStride);
-+        int qualityDropoff = sanitizeQualityDropoff(VoxyConfig.CONFIG.seedLodQualityDropoff);
-+        boolean adaptiveQuality = VoxyConfig.CONFIG.seedLodAdaptiveQuality;
-+        boolean automaticQuality = VoxyConfig.CONFIG.seedLodAutomaticQualityTarget
++                VoxyConfig.CONFIG.effectiveSeedLodMinimumStride());
++        int configuredMaximumStride = sanitizeMaximumStride(
++                VoxyConfig.CONFIG.effectiveSeedLodMaximumStride());
++        int qualityDropoff = sanitizeQualityDropoff(
++                VoxyConfig.CONFIG.effectiveSeedLodQualityDropoff());
++        boolean adaptiveQuality = VoxyConfig.CONFIG.effectiveSeedLodAdaptiveQuality();
++        boolean automaticQuality = VoxyConfig.CONFIG.effectiveSeedLodAutomaticQualityTarget()
 +                && adaptiveQuality;
 +        int targetGenerationSeconds = Math.max(15, Math.min(120,
 +                VoxyConfig.CONFIG.seedLodTargetGenerationSeconds));
-+        boolean nSizedGeneration = VoxyConfig.CONFIG.seedLodNSizedGeneration;
-+        boolean nativeSurfaceRules = VoxyConfig.CONFIG.seedLodNativeSurfaceRules;
++        boolean nSizedGeneration = VoxyConfig.CONFIG.effectiveSeedLodNSizedGeneration();
++        boolean nativeSurfaceRules = VoxyConfig.CONFIG.effectiveSeedLodNativeSurfaceRules();
 +        int nativeSurfaceDistance = SeedLodSurfacePolicy.sanitizeDistance(
-+                VoxyConfig.CONFIG.seedLodNativeSurfaceDistance);
++                VoxyConfig.CONFIG.effectiveSeedLodNativeSurfaceDistance());
++        boolean nativeTrees = VoxyConfig.CONFIG.seedLodNativeTrees;
++        SeedLodVegetationMode vegetationMode = VoxyConfig.CONFIG.effectiveSeedLodVegetationMode();
++        int nativeVegetationDistance = Math.max(16, Math.min(256,
++                VoxyConfig.CONFIG.effectiveSeedLodNativeVegetationDistance()));
++        int featureBudgetPercent = Math.max(1, Math.min(50,
++                VoxyConfig.CONFIG.effectiveSeedLodFeatureBudgetPercent()));
 +        if (this.scannedTargetRadius != targetRadius
 +                || this.scannedMinimumStride != minimumStride
 +                || this.scannedMaximumStride != configuredMaximumStride
@@ -932,11 +1156,19 @@ index 00000000..710c6c91
 +                || this.scannedTargetGenerationSeconds != targetGenerationSeconds
 +                || this.scannedNSizedGeneration != nSizedGeneration
 +                || this.scannedNativeSurfaceRules != nativeSurfaceRules
-+                || this.scannedNativeSurfaceDistance != nativeSurfaceDistance) {
++                || this.scannedNativeSurfaceDistance != nativeSurfaceDistance
++                || this.scannedNativeTrees != nativeTrees
++                || this.scannedVegetationMode != vegetationMode
++                || this.scannedNativeVegetationDistance != nativeVegetationDistance
++                || this.scannedFeatureBudgetPercent != featureBudgetPercent) {
 +            if (this.scannedTargetRadius != -1
 +                    && (this.scannedNSizedGeneration != nSizedGeneration
 +                    || this.scannedNativeSurfaceRules != nativeSurfaceRules
-+                    || this.scannedNativeSurfaceDistance != nativeSurfaceDistance)) {
++                    || this.scannedNativeSurfaceDistance != nativeSurfaceDistance
++                    || this.scannedNativeTrees != nativeTrees
++                    || this.scannedVegetationMode != vegetationMode
++                    || this.scannedNativeVegetationDistance != nativeVegetationDistance
++                    || this.scannedFeatureBudgetPercent != featureBudgetPercent)) {
 +                this.completedWork.clear();
 +                current.sharedSamples.clear();
 +                if (current.nativeSurfaceSampler != null) {
@@ -955,10 +1187,16 @@ index 00000000..710c6c91
 +            this.scannedNSizedGeneration = nSizedGeneration;
 +            this.scannedNativeSurfaceRules = nativeSurfaceRules;
 +            this.scannedNativeSurfaceDistance = nativeSurfaceDistance;
++            this.scannedNativeTrees = nativeTrees;
++            this.scannedVegetationMode = vegetationMode;
++            this.scannedNativeVegetationDistance = nativeVegetationDistance;
++            this.scannedFeatureBudgetPercent = featureBudgetPercent;
 +            this.effectiveMaximumStride = configuredMaximumStride;
 +            this.automaticQualityLocked = !automaticQuality;
 +            this.automaticQualityStartNanos = System.nanoTime();
-+            this.automaticQualityStatus = automaticQuality ? "calibrating" : "manual";
++            this.automaticQualityStatus = automaticQuality ? "calibrating"
++                    : VoxyConfig.CONFIG.getSeedLodQualityPreset().name()
++                    .toLowerCase(Locale.ROOT);
 +            this.scanGeneration++;
 +        }
 +        if (this.waveScanFinished) {
@@ -1304,7 +1542,7 @@ index 00000000..710c6c91
 +                int blockZ = (originCellZ + z) * cellSize + cellSize / 2;
 +                expanded[(z + 1) * expandedWidth + x + 1] = terrainSample(
 +                        sampleGrid, blockX, blockZ, waterSurfaceY,
-+                        VoxyConfig.CONFIG.seedLodSmoothing);
++                        VoxyConfig.CONFIG.effectiveSeedLodSmoothing());
 +            }
 +        }
 +
@@ -1348,7 +1586,9 @@ index 00000000..710c6c91
 +                    long surfaceId = predictionId(binding, mapper,
 +                            terrain.surfaceBlock, terrain.biome);
 +                    cells.add(new WorldUpdater.CoarseCell(cellX, surfaceCell, cellZ, surfaceId));
-+                    if (VoxyConfig.CONFIG.seedLodVegetation) {
++                    if (VoxyConfig.CONFIG.seedLodVegetation
++                            && VoxyConfig.CONFIG.effectiveSeedLodVegetationMode()
++                            != SeedLodVegetationMode.OFF) {
 +                        addCoarseVegetation(binding, mapper, cells, terrain,
 +                                cellX, cellZ, cellSize, surfaceCell, vegetationDensity);
 +                    }
@@ -1405,7 +1645,7 @@ index 00000000..710c6c91
 +                int blockZ = (chunkZ << 4) + localZ;
 +                expandedColumns[(localZ + 1) * 18 + localX + 1] = terrainSample(
 +                        sampleGrid, blockX, blockZ, waterSurfaceY(binding.generator),
-+                        VoxyConfig.CONFIG.seedLodSmoothing);
++                        VoxyConfig.CONFIG.effectiveSeedLodSmoothing());
 +            }
 +        }
 +
@@ -1454,7 +1694,9 @@ index 00000000..710c6c91
 +            }
 +        }
 +
-+        if (VoxyConfig.CONFIG.seedLodVegetation) {
++        if (VoxyConfig.CONFIG.seedLodVegetation
++                && VoxyConfig.CONFIG.effectiveSeedLodVegetationMode()
++                != SeedLodVegetationMode.OFF) {
 +            addVegetation(binding, mapper, sections, chunkX, chunkZ, columns, maxY,
 +                    vegetationDensity);
 +        }
@@ -1472,7 +1714,7 @@ index 00000000..710c6c91
 +            return sample(binding, blockX, blockZ, minY, maxY);
 +        }
 +        boolean fast = binding.fastHeightSampling
-+                && VoxyConfig.CONFIG.seedLodFastDatapackSampling;
++                && VoxyConfig.CONFIG.effectiveSeedLodFastDatapackSampling();
 +        boolean nativeSurface = nativeSurfaceEligible(binding, blockX, blockZ);
 +        SampleKey key = new SampleKey(stride, cellX, cellZ, fast, nativeSurface);
 +        Sample cached = binding.sharedSamples.get(key);
@@ -1505,7 +1747,7 @@ index 00000000..710c6c91
 +
 +    private static Sample sampleRaw(Binding binding, int blockX, int blockZ, int minY, int maxY) {
 +        int waterSurfaceY = waterSurfaceY(binding.generator);
-+        if (binding.fastHeightSampling && VoxyConfig.CONFIG.seedLodFastDatapackSampling) {
++        if (binding.fastHeightSampling && VoxyConfig.CONFIG.effectiveSeedLodFastDatapackSampling()) {
 +            // One solid-surface query replaces the previous world-surface query
 +            // plus an additional ocean-floor query in water. Water itself is a
 +            // flat visual layer at the datapack sea level.
@@ -1571,9 +1813,9 @@ index 00000000..710c6c91
 +    }
 +
 +    private static boolean nativeSurfaceEligible(Binding binding, int blockX, int blockZ) {
-+        return SeedLodSurfacePolicy.useNative(VoxyConfig.CONFIG.seedLodNativeSurfaceRules,
++        return SeedLodSurfacePolicy.useNative(VoxyConfig.CONFIG.effectiveSeedLodNativeSurfaceRules(),
 +                binding.nativeSurfaceSampler != null,
-+                VoxyConfig.CONFIG.seedLodNativeSurfaceDistance,
++                VoxyConfig.CONFIG.effectiveSeedLodNativeSurfaceDistance(),
 +                binding.playerChunkX, binding.playerChunkZ, blockX, blockZ);
 +    }
 +
@@ -1705,6 +1947,10 @@ index 00000000..710c6c91
 +                                      Int2ObjectOpenHashMap<VoxelizedSection> sections,
 +                                      int chunkX, int chunkZ, Sample[] columns, int maxY,
 +                                      int densityThreshold) {
++        if (tryPlaceNativeChunkFeatures(binding, mapper, sections,
++                chunkX, chunkZ, columns)) {
++            return;
++        }
 +        // A world-space blue-noise-like distribution replaces the old four
 +        // fixed chunk quadrants. Local hash minima keep trees separated without
 +        // exposing rows or chunk-aligned stripes.
@@ -1735,6 +1981,107 @@ index 00000000..710c6c91
 +                        height, profile.style, ground.biome, random);
 +            }
 +        }
++    }
++
++    private static boolean tryPlaceNativeChunkFeatures(Binding binding, Mapper mapper,
++                                                       Int2ObjectOpenHashMap<VoxelizedSection> sections,
++                                                       int chunkX, int chunkZ, Sample[] columns) {
++        SeedLodVegetationMode mode = VoxyConfig.CONFIG.effectiveSeedLodVegetationMode();
++        if (mode == SeedLodVegetationMode.OFF || mode == SeedLodVegetationMode.PROXY
++                || binding.nativeFeatureSampler == null) return false;
++        int distance = Math.max(Math.abs(chunkX - binding.playerChunkX),
++                Math.abs(chunkZ - binding.playerChunkZ));
++        if (mode == SeedLodVegetationMode.HYBRID
++                && distance > Math.max(16, Math.min(256,
++                VoxyConfig.CONFIG.effectiveSeedLodNativeVegetationDistance()))) return false;
++        int budget = Math.max(1, Math.min(50,
++                VoxyConfig.CONFIG.effectiveSeedLodFeatureBudgetPercent()));
++        if (!binding.featureBudget.allow(budget)) {
++            binding.metrics.recordNativeFeatureBudgetFallback();
++            return false;
++        }
++
++        Sample representative = columns[(8 << 4) | 8];
++        if (representative == null || representative.isOcean()) {
++            representative = null;
++            for (Sample column : columns) {
++                if (column != null && !column.isOcean()) {
++                    representative = column;
++                    break;
++                }
++            }
++        }
++        if (representative == null) return true;
++
++        long started = System.nanoTime();
++        SeedLodNativeFeatureSampler.Result result;
++        try {
++            result = binding.nativeFeatureSampler.placeChunkFeatures(representative.biome,
++                    chunkX, chunkZ, representative.surfaceBlock,
++                    mix64(binding.seed ^ ((long) chunkX << 32) ^ (chunkZ & 0xFFFFFFFFL)));
++        } finally {
++            binding.featureBudget.record(System.nanoTime() - started);
++        }
++        binding.metrics.recordNativeFeature(result.supported(), result.placed(),
++                System.nanoTime() - started);
++        if (!result.supported() || !result.successful()) return false;
++
++        for (var entry : result.blocks().entrySet()) {
++            var pos = entry.getKey();
++            int localX = pos.getX() - (chunkX << 4);
++            int localZ = pos.getZ() - (chunkZ << 4);
++            if (localX < 0 || localX >= 16 || localZ < 0 || localZ >= 16) continue;
++            Sample column = columns[(localZ << 4) | localX];
++            BlockState state = entry.getValue();
++            if (column == null || pos.getY() <= column.surfaceY || state.isAir()) continue;
++            long id = predictionId(binding, mapper, state, representative.biome);
++            putBlock(sections, chunkX, chunkZ, localX, pos.getY(), localZ, id, false);
++        }
++        return true;
++    }
++
++    private static boolean tryPlaceNativeTree(Binding binding, Mapper mapper,
++                                              Int2ObjectOpenHashMap<VoxelizedSection> sections,
++                                              int chunkX, int chunkZ, Sample[] columns, Sample ground,
++                                              int blockX, int blockZ, long salt) {
++        SeedLodVegetationMode mode = VoxyConfig.CONFIG.effectiveSeedLodVegetationMode();
++        if (mode == SeedLodVegetationMode.OFF || mode == SeedLodVegetationMode.PROXY
++                || binding.nativeFeatureSampler == null) return false;
++        int sampleChunkX = Math.floorDiv(blockX, 16);
++        int sampleChunkZ = Math.floorDiv(blockZ, 16);
++        int distance = Math.max(Math.abs(sampleChunkX - binding.playerChunkX),
++                Math.abs(sampleChunkZ - binding.playerChunkZ));
++        if (mode == SeedLodVegetationMode.HYBRID
++                && distance > Math.max(16, Math.min(256,
++                VoxyConfig.CONFIG.effectiveSeedLodNativeVegetationDistance()))) return false;
++        int budget = Math.max(1, Math.min(50,
++                VoxyConfig.CONFIG.effectiveSeedLodFeatureBudgetPercent()));
++        if (!binding.featureBudget.allow(budget)) {
++            binding.metrics.recordNativeFeatureBudgetFallback();
++            return false;
++        }
++        long started = System.nanoTime();
++        SeedLodNativeFeatureSampler.Result result;
++        try {
++            result = binding.nativeFeatureSampler.placeTree(
++                    ground.biome, blockX, ground.surfaceY, blockZ, ground.surfaceBlock, salt);
++        } finally {
++            binding.featureBudget.record(System.nanoTime() - started);
++        }
++        binding.metrics.recordNativeFeature(result.supported(), result.placed(),
++                System.nanoTime() - started);
++        if (!result.placed()) return false;
++        for (var entry : result.blocks().entrySet()) {
++            var pos = entry.getKey();
++            int localX = pos.getX() - (chunkX << 4);
++            int localZ = pos.getZ() - (chunkZ << 4);
++            if (localX < 0 || localX >= 16 || localZ < 0 || localZ >= 16) continue;
++            Sample column = columns[(localZ << 4) | localX];
++            if (column == null || pos.getY() <= column.surfaceY || entry.getValue().isAir()) continue;
++            long id = predictionId(binding, mapper, entry.getValue(), ground.biome);
++            putBlock(sections, chunkX, chunkZ, localX, pos.getY(), localZ, id, false);
++        }
++        return true;
 +    }
 +
 +    private static long treeSpatialHash(long seed, int blockX, int blockZ) {
@@ -2267,6 +2614,8 @@ index 00000000..710c6c91
 +        final ConcurrentHashMap<MappingKey, Long> predictionIds = new ConcurrentHashMap<>();
 +        final ConcurrentHashMap<SampleKey, Sample> sharedSamples = new ConcurrentHashMap<>();
 +        final SeedLodNativeSurfaceSampler nativeSurfaceSampler;
++        final SeedLodNativeFeatureSampler nativeFeatureSampler;
++        final SeedLodFeatureBudget featureBudget = new SeedLodFeatureBudget();
 +        volatile int playerChunkX;
 +        volatile int playerChunkZ;
 +
@@ -2281,6 +2630,8 @@ index 00000000..710c6c91
 +            this.fastHeightSampling = generator instanceof NoiseBasedChunkGenerator;
 +            this.nativeSurfaceSampler = generator instanceof NoiseBasedChunkGenerator noiseGenerator
 +                    ? new SeedLodNativeSurfaceSampler(level, noiseGenerator, randomState) : null;
++            this.nativeFeatureSampler = new SeedLodNativeFeatureSampler(level, generator,
++                    randomState, seed);
 +            this.generatorFingerprint = SeedLodManager.generatorFingerprint(this);
 +            this.predictionMarker = SeedLodFingerprintStore.predictionMarker(
 +                    this.generatorFingerprint);
@@ -2334,10 +2685,10 @@ index 00000000..710c6c91
 +}
 diff --git a/src/main/java/me/cortex/voxy/client/seedlod/SeedLodMetrics.java b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodMetrics.java
 new file mode 100644
-index 00000000..c581fc92
+index 00000000..bf1391f9
 --- /dev/null
 +++ b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodMetrics.java
-@@ -0,0 +1,203 @@
+@@ -0,0 +1,228 @@
 +package me.cortex.voxy.client.seedlod;
 +
 +import java.util.Arrays;
@@ -2357,6 +2708,11 @@ index 00000000..c581fc92
 +    private final LongAdder cacheMisses = new LongAdder();
 +    private final LongAdder nativeSurfaceAttempts = new LongAdder();
 +    private final LongAdder nativeSurfaceHits = new LongAdder();
++    private final LongAdder nativeFeatureAttempts = new LongAdder();
++    private final LongAdder nativeFeaturePlaced = new LongAdder();
++    private final LongAdder nativeFeatureUnsupported = new LongAdder();
++    private final LongAdder nativeFeatureBudgetFallbacks = new LongAdder();
++    private final LongAdder nativeFeatureNanos = new LongAdder();
 +    private final LongAdder cellsWritten = new LongAdder();
 +    private final LongAdder jobsStarted = new LongAdder();
 +    private final LongAdder jobsFinished = new LongAdder();
@@ -2394,6 +2750,17 @@ index 00000000..c581fc92
 +    public void recordNativeSurface(boolean matched) {
 +        this.nativeSurfaceAttempts.increment();
 +        if (matched) this.nativeSurfaceHits.increment();
++    }
++
++    public void recordNativeFeature(boolean supported, boolean placed, long elapsedNanos) {
++        this.nativeFeatureAttempts.increment();
++        if (placed) this.nativeFeaturePlaced.increment();
++        if (!supported) this.nativeFeatureUnsupported.increment();
++        this.nativeFeatureNanos.add(Math.max(0L, elapsedNanos));
++    }
++
++    public void recordNativeFeatureBudgetFallback() {
++        this.nativeFeatureBudgetFallbacks.increment();
 +    }
 +
 +    public void recordWrite(int level, long sections, long cells) {
@@ -2459,7 +2826,9 @@ index 00000000..c581fc92
 +                    started, this.jobsFinished.sum(), this.jobsCancelled.sum(),
 +                    this.jobsFailed.sum(), this.teleportCancelled.sum(),
 +                    this.peakPending.get(), this.nativeSurfaceAttempts.sum(),
-+                    this.nativeSurfaceHits.sum());
++                    this.nativeSurfaceHits.sum(), this.nativeFeatureAttempts.sum(),
++                    this.nativeFeaturePlaced.sum(), this.nativeFeatureUnsupported.sum(),
++                    this.nativeFeatureBudgetFallbacks.sum(), this.nativeFeatureNanos.sum());
 +            this.previousTime = now;
 +            this.previousSamples = samples;
 +            this.previousCells = cells;
@@ -2522,11 +2891,15 @@ index 00000000..c581fc92
 +                           long cacheMisses, long jobsStarted, long jobsFinished,
 +                           long jobsCancelled, long jobsFailed,
 +                           long teleportCancelled, int peakPending,
-+                           long nativeSurfaceAttempts, long nativeSurfaceHits) {
++                           long nativeSurfaceAttempts, long nativeSurfaceHits,
++                           long nativeFeatureAttempts, long nativeFeaturePlaced,
++                           long nativeFeatureUnsupported, long nativeFeatureBudgetFallbacks,
++                           long nativeFeatureNanos) {
 +        private static Snapshot empty() {
 +            return new Snapshot(RuntimeState.inactive(), 0.0, 0.0, 0.0,
 +                    0.0, 0.0, 0.0, 0L, 0L, new long[5],
-+                    0L, 0L, 0L, 0L, 0L, 0L, 0L, 0, 0L, 0L);
++                    0L, 0L, 0L, 0L, 0L, 0L, 0L, 0, 0L, 0L,
++                    0L, 0L, 0L, 0L, 0L);
 +        }
 +
 +        private Snapshot withRuntime(RuntimeState state) {
@@ -2537,7 +2910,429 @@ index 00000000..c581fc92
 +                    this.cacheHits, this.cacheMisses, this.jobsStarted,
 +                    this.jobsFinished, this.jobsCancelled, this.jobsFailed,
 +                    this.teleportCancelled, this.peakPending,
-+                    this.nativeSurfaceAttempts, this.nativeSurfaceHits);
++                    this.nativeSurfaceAttempts, this.nativeSurfaceHits,
++                    this.nativeFeatureAttempts, this.nativeFeaturePlaced,
++                    this.nativeFeatureUnsupported, this.nativeFeatureBudgetFallbacks,
++                    this.nativeFeatureNanos);
++        }
++    }
++}
+diff --git a/src/main/java/me/cortex/voxy/client/seedlod/SeedLodNativeFeatureSampler.java b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodNativeFeatureSampler.java
+new file mode 100644
+index 00000000..f8147d97
+--- /dev/null
++++ b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodNativeFeatureSampler.java
+@@ -0,0 +1,413 @@
++package me.cortex.voxy.client.seedlod;
++
++import me.cortex.voxy.common.Logger;
++import net.minecraft.core.BlockPos;
++import net.minecraft.core.Holder;
++import net.minecraft.core.QuartPos;
++import net.minecraft.server.level.ServerLevel;
++import net.minecraft.util.RandomSource;
++import net.minecraft.world.level.WorldGenLevel;
++import net.minecraft.world.level.biome.Biome;
++import net.minecraft.world.level.block.Blocks;
++import net.minecraft.world.level.block.state.BlockState;
++import net.minecraft.world.level.chunk.ChunkGenerator;
++import net.minecraft.world.level.levelgen.Heightmap;
++import net.minecraft.world.level.levelgen.RandomState;
++import net.minecraft.world.level.levelgen.feature.ConfiguredFeature;
++import net.minecraft.world.level.levelgen.feature.TreeFeature;
++import net.minecraft.world.level.levelgen.feature.Feature;
++import net.minecraft.world.level.levelgen.placement.PlacedFeature;
++
++import java.lang.reflect.InvocationHandler;
++import java.lang.reflect.Method;
++import java.lang.reflect.Proxy;
++import java.util.ArrayList;
++import java.util.Collections;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Optional;
++import java.util.concurrent.ConcurrentHashMap;
++import java.util.concurrent.atomic.AtomicBoolean;
++
++/**
++ * Runs supported configured features against a disposable sparse WorldGenLevel.
++ * No Minecraft chunks are loaded, registered, lit, saved, or decorated.
++ */
++final class SeedLodNativeFeatureSampler {
++    private static final int MAX_WRITES_PER_FEATURE = 16_384;
++    private static final int MAX_HORIZONTAL_REACH = 40;
++
++    private final ServerLevel level;
++    private final ChunkGenerator generator;
++    private final RandomState randomState;
++    private final long seed;
++    private final ConcurrentHashMap<String, List<ConfiguredFeature<?, ?>>> treeFeatures =
++            new ConcurrentHashMap<>();
++    private final ConcurrentHashMap<String, List<PlacedFeature>> placedFeatures =
++            new ConcurrentHashMap<>();
++    private final AtomicBoolean failureLogged = new AtomicBoolean();
++
++    SeedLodNativeFeatureSampler(ServerLevel level, ChunkGenerator generator,
++                                RandomState randomState, long seed) {
++        this.level = level;
++        this.generator = generator;
++        this.randomState = randomState;
++        this.seed = seed;
++    }
++
++    Result placeTree(Holder<Biome> biome, int blockX, int groundY, int blockZ,
++                     BlockState groundState, long salt) {
++        List<ConfiguredFeature<?, ?>> features = this.treeFeatures.computeIfAbsent(
++                biomeKey(biome), ignored -> collectTrees(biome));
++        if (features.isEmpty()) return Result.unsupported();
++
++        int index = (int) Math.floorMod(mix64(this.seed ^ salt), features.size());
++        ConfiguredFeature<?, ?> feature = features.get(index);
++        SparseWorld handler = new SparseWorld(this.level, this.generator, this.randomState,
++                blockX, groundY, blockZ, groundState, biome);
++        WorldGenLevel virtualLevel = handler.proxy();
++        try {
++            boolean placed = feature.place(virtualLevel, this.generator,
++                    RandomSource.create(mix64(this.seed + salt)),
++                    new BlockPos(blockX, groundY + 1, blockZ));
++            if (!placed || handler.overflowed || handler.blocks.isEmpty()) {
++                return new Result(true, true, false, Map.of());
++            }
++            return new Result(true, true, true, Collections.unmodifiableMap(handler.blocks));
++        } catch (Throwable throwable) {
++            if (this.failureLogged.compareAndSet(false, true)) {
++                Logger.error("Native Seed LOD tree feature failed; using proxy vegetation", throwable);
++            }
++            return new Result(true, false, false, Map.of());
++        }
++    }
++
++    Result placeChunkFeatures(Holder<Biome> biome, int chunkX, int chunkZ,
++                              BlockState representativeGround, long salt) {
++        List<PlacedFeature> features = this.placedFeatures.computeIfAbsent(
++                biomeKey(biome), ignored -> collectPlacedFeatures(biome));
++        if (features.isEmpty()) return Result.unsupported();
++
++        int centerX = (chunkX << 4) + 8;
++        int centerZ = (chunkZ << 4) + 8;
++        int centerY = this.generator.getBaseHeight(centerX, centerZ,
++                Heightmap.Types.OCEAN_FLOOR_WG, this.level, this.randomState) - 1;
++        SparseWorld handler = new SparseWorld(this.level, this.generator, this.randomState,
++                centerX, centerY, centerZ, representativeGround, biome);
++        WorldGenLevel virtualLevel = handler.proxy();
++        boolean placedAny = false;
++        try {
++            BlockPos origin = new BlockPos(chunkX << 4, this.level.getMinY(), chunkZ << 4);
++            for (int index = 0; index < features.size(); index++) {
++                if (handler.overflowed) break;
++                RandomSource random = RandomSource.create(mix64(this.seed ^ salt
++                        ^ ((long) index * 0x9E3779B97F4A7C15L)));
++                placedAny |= features.get(index).placeWithBiomeCheck(
++                        virtualLevel, this.generator, random, origin);
++            }
++            if (handler.overflowed) return new Result(true, false, false, Map.of());
++            return new Result(true, true, placedAny,
++                    Collections.unmodifiableMap(handler.blocks));
++        } catch (Throwable throwable) {
++            if (this.failureLogged.compareAndSet(false, true)) {
++                Logger.error("Native Seed LOD placed-feature execution failed; using proxies", throwable);
++            }
++            return new Result(true, false, false, Map.of());
++        }
++    }
++
++    int supportedBiomeCount() {
++        return this.treeFeatures.size();
++    }
++
++    private static List<ConfiguredFeature<?, ?>> collectTrees(Holder<Biome> biome) {
++        List<ConfiguredFeature<?, ?>> result = new ArrayList<>();
++        try {
++            for (var featureSet : biome.value().getGenerationSettings().features()) {
++                for (var placedHolder : featureSet) {
++                    placedHolder.value().getFeatures()
++                            .map(Holder::value)
++                            .filter(configured -> configured.feature() instanceof TreeFeature)
++                            .forEach(configured -> {
++                                if (!result.contains(configured)) result.add(configured);
++                            });
++                }
++            }
++        } catch (RuntimeException ignored) {
++            return List.of();
++        }
++        return List.copyOf(result);
++    }
++
++    private static List<PlacedFeature> collectPlacedFeatures(Holder<Biome> biome) {
++        List<PlacedFeature> result = new ArrayList<>();
++        try {
++            for (var featureSet : biome.value().getGenerationSettings().features()) {
++                for (var placedHolder : featureSet) {
++                    String id = placedHolder.unwrapKey().map(key -> key.identifier().toString())
++                            .orElse("").toLowerCase(java.util.Locale.ROOT);
++                    PlacedFeature placed = placedHolder.value();
++                    if (isSupportedPlacedFeature(placed, id)) result.add(placed);
++                }
++            }
++        } catch (RuntimeException ignored) {
++            return List.of();
++        }
++        return List.copyOf(result);
++    }
++
++    static boolean isSupportedPlacedFeature(PlacedFeature placed, String id) {
++        List<ConfiguredFeature<?, ?>> all = placed.getFeatures().map(Holder::value).toList();
++        if (all.isEmpty()) return false;
++        boolean hasVisualFeature = false;
++        for (ConfiguredFeature<?, ?> configured : all) {
++            Feature<?> feature = configured.feature();
++            if (isDirectFeatureSupported(feature, id)) {
++                hasVisualFeature = true;
++                continue;
++            }
++            if (feature == Feature.RANDOM_SELECTOR
++                    || feature == Feature.WEIGHTED_RANDOM_SELECTOR
++                    || feature == Feature.SIMPLE_RANDOM_SELECTOR
++                    || feature == Feature.RANDOM_BOOLEAN_SELECTOR
++                    || feature == Feature.SEQUENCE) {
++                continue;
++            }
++            return false;
++        }
++        return hasVisualFeature;
++    }
++
++    static boolean isDirectFeatureSupported(Feature<?> feature, String id) {
++        if (feature instanceof TreeFeature || feature == Feature.TREE
++                || feature == Feature.FALLEN_TREE
++                || feature == Feature.HUGE_RED_MUSHROOM
++                || feature == Feature.HUGE_BROWN_MUSHROOM
++                || feature == Feature.BAMBOO
++                || feature == Feature.HUGE_FUNGUS) return true;
++        return id.contains("cactus")
++                && (feature == Feature.BLOCK_COLUMN || feature == Feature.SIMPLE_BLOCK);
++    }
++
++    private static String biomeKey(Holder<Biome> biome) {
++        return biome.unwrapKey().map(key -> key.identifier().toString())
++                .orElseGet(() -> "direct:" + System.identityHashCode(biome.value()));
++    }
++
++    private static long mix64(long value) {
++        value = (value ^ (value >>> 30)) * 0xBF58476D1CE4E5B9L;
++        value = (value ^ (value >>> 27)) * 0x94D049BB133111EBL;
++        return value ^ (value >>> 31);
++    }
++
++    record Result(boolean supported, boolean successful, boolean placed,
++                  Map<BlockPos, BlockState> blocks) {
++        static Result unsupported() {
++            return new Result(false, false, false, Map.of());
++        }
++    }
++
++    private static final class SparseWorld implements InvocationHandler {
++        private final ServerLevel level;
++        private final ChunkGenerator generator;
++        private final RandomState randomState;
++        private final int originX;
++        private final int originY;
++        private final int originZ;
++        private final BlockState groundState;
++        private final Holder<Biome> originBiome;
++        private final Map<BlockPos, BlockState> blocks = new LinkedHashMap<>();
++        private final WorldGenLevel proxy;
++        private boolean overflowed;
++
++        SparseWorld(ServerLevel level, ChunkGenerator generator, RandomState randomState,
++                    int originX, int originY, int originZ, BlockState groundState,
++                    Holder<Biome> originBiome) {
++            this.level = level;
++            this.generator = generator;
++            this.randomState = randomState;
++            this.originX = originX;
++            this.originY = originY;
++            this.originZ = originZ;
++            this.groundState = groundState;
++            this.originBiome = originBiome;
++            this.proxy = (WorldGenLevel) Proxy.newProxyInstance(
++                    WorldGenLevel.class.getClassLoader(), new Class<?>[]{WorldGenLevel.class}, this);
++        }
++
++        WorldGenLevel proxy() {
++            return this.proxy;
++        }
++
++        @Override
++        public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
++            String name = method.getName();
++            if (method.getDeclaringClass() == Object.class) {
++                return switch (name) {
++                    case "toString" -> "SeedLodSparseWorld";
++                    case "hashCode" -> System.identityHashCode(this);
++                    case "equals" -> proxy == args[0];
++                    default -> null;
++                };
++            }
++            switch (name) {
++                case "getBlockState" -> {
++                    return this.getBlockState((BlockPos) args[0]);
++                }
++                case "getFluidState" -> {
++                    return this.getBlockState((BlockPos) args[0]).getFluidState();
++                }
++                case "isStateAtPosition" -> {
++                    @SuppressWarnings("unchecked")
++                    var predicate = (java.util.function.Predicate<BlockState>) args[1];
++                    return predicate.test(this.getBlockState((BlockPos) args[0]));
++                }
++                case "isFluidAtPosition" -> {
++                    @SuppressWarnings("unchecked")
++                    var predicate = (java.util.function.Predicate<net.minecraft.world.level.material.FluidState>) args[1];
++                    return predicate.test(this.getBlockState((BlockPos) args[0]).getFluidState());
++                }
++                case "setBlock" -> {
++                    return this.setBlock((BlockPos) args[0], (BlockState) args[1]);
++                }
++                case "removeBlock", "destroyBlock" -> {
++                    this.blocks.remove(((BlockPos) args[0]).immutable());
++                    return true;
++                }
++                case "getHeightmapPos" -> {
++                    BlockPos pos = (BlockPos) args[1];
++                    return new BlockPos(pos.getX(), this.surfaceY(pos.getX(), pos.getZ()) + 1, pos.getZ());
++                }
++                case "getHeight" -> {
++                    if (args == null || args.length == 0) return this.level.getHeight();
++                    return this.surfaceY((int) args[1], (int) args[2]);
++                }
++                case "getMinY", "getMinBuildHeight" -> {
++                    return this.level.getMinY();
++                }
++                case "getMaxY", "getMaxBuildHeight" -> {
++                    return this.level.getMaxY();
++                }
++                case "getSeaLevel" -> {
++                    return this.generator.getSeaLevel();
++                }
++                case "getSeed" -> {
++                    return this.level.getSeed();
++                }
++                case "getRandom" -> {
++                    return this.level.getRandom();
++                }
++                case "getUncachedNoiseBiome" -> {
++                    return this.generator.getBiomeSource().getNoiseBiome((int) args[0], (int) args[1],
++                            (int) args[2], this.randomState.sampler());
++                }
++                case "getBiome" -> {
++                    BlockPos pos = (BlockPos) args[0];
++                    return this.generator.getBiomeSource().getNoiseBiome(
++                            QuartPos.fromBlock(pos.getX()), QuartPos.fromBlock(pos.getY()),
++                            QuartPos.fromBlock(pos.getZ()), this.randomState.sampler());
++                }
++                case "getBlockEntity" -> {
++                    return method.getReturnType() == Optional.class ? Optional.empty() : null;
++                }
++                case "registryAccess" -> {
++                    return this.level.registryAccess();
++                }
++                case "enabledFeatures" -> {
++                    return this.level.enabledFeatures();
++                }
++                case "dimensionType" -> {
++                    return this.level.dimensionType();
++                }
++                case "getBiomeManager" -> {
++                    return this.level.getBiomeManager();
++                }
++                case "getWorldBorder" -> {
++                    return this.level.getWorldBorder();
++                }
++                case "getLevelData" -> {
++                    return this.level.getLevelData();
++                }
++                case "getServer" -> {
++                    return this.level.getServer();
++                }
++                case "getChunkSource" -> {
++                    // Never expose the live source. A supported feature that requires
++                    // a real chunk source is rejected by the virtual world and falls
++                    // back to proxy vegetation instead of loading distant chunks.
++                    return null;
++                }
++                case "ensureCanWrite" -> {
++                    return this.inBounds((BlockPos) args[0]);
++                }
++                case "nextSubTickCount" -> {
++                    return 0L;
++                }
++                case "addFreshEntity" -> {
++                    return false;
++                }
++                case "playSound", "addParticle", "levelEvent", "gameEvent",
++                     "setCurrentlyGenerating", "updateNeighborsAt", "neighborShapeChanged" -> {
++                    return null;
++                }
++                default -> {
++                    if (method.isDefault()) return InvocationHandler.invokeDefault(proxy, method, args);
++                    return defaultValue(method.getReturnType());
++                }
++            }
++        }
++
++        private boolean setBlock(BlockPos pos, BlockState state) {
++            if (!this.inBounds(pos)) return false;
++            if (this.blocks.size() >= MAX_WRITES_PER_FEATURE && !this.blocks.containsKey(pos)) {
++                this.overflowed = true;
++                return false;
++            }
++            BlockPos key = pos.immutable();
++            if (state.isAir()) this.blocks.remove(key);
++            else this.blocks.put(key, state);
++            return true;
++        }
++
++        private BlockState getBlockState(BlockPos pos) {
++            BlockState captured = this.blocks.get(pos);
++            if (captured != null) return captured;
++            int surfaceY = this.surfaceY(pos.getX(), pos.getZ());
++            if (pos.getY() > surfaceY) return Blocks.AIR.defaultBlockState();
++            if (pos.getY() == surfaceY) return this.groundState;
++            if (pos.getY() >= surfaceY - 3) return Blocks.DIRT.defaultBlockState();
++            return Blocks.STONE.defaultBlockState();
++        }
++
++        private int surfaceY(int blockX, int blockZ) {
++            if (blockX == this.originX && blockZ == this.originZ) return this.originY;
++            return this.generator.getBaseHeight(blockX, blockZ, Heightmap.Types.OCEAN_FLOOR_WG,
++                    this.level, this.randomState) - 1;
++        }
++
++        private boolean inBounds(BlockPos pos) {
++            return Math.abs(pos.getX() - this.originX) <= MAX_HORIZONTAL_REACH
++                    && Math.abs(pos.getZ() - this.originZ) <= MAX_HORIZONTAL_REACH
++                    && pos.getY() >= this.level.getMinY() && pos.getY() < this.level.getMaxY();
++        }
++
++        private static Object defaultValue(Class<?> type) {
++            if (!type.isPrimitive()) {
++                if (type == Optional.class) return Optional.empty();
++                if (List.class.isAssignableFrom(type)) return List.of();
++                if (java.util.Set.class.isAssignableFrom(type)) return java.util.Set.of();
++                return null;
++            }
++            if (type == boolean.class) return false;
++            if (type == byte.class) return (byte) 0;
++            if (type == short.class) return (short) 0;
++            if (type == int.class) return 0;
++            if (type == long.class) return 0L;
++            if (type == float.class) return 0F;
++            if (type == double.class) return 0D;
++            if (type == char.class) return '\0';
++            return null;
 +        }
 +    }
 +}
@@ -2721,6 +3516,49 @@ index 00000000..8f7ca70b
 +        }
 +    }
 +}
+diff --git a/src/main/java/me/cortex/voxy/client/seedlod/SeedLodQualityPreset.java b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodQualityPreset.java
+new file mode 100644
+index 00000000..d96388fa
+--- /dev/null
++++ b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodQualityPreset.java
+@@ -0,0 +1,37 @@
++package me.cortex.voxy.client.seedlod;
++
++/**
++ * Cohesive Seed LOD quality profiles. Custom preserves every advanced control.
++ */
++public enum SeedLodQualityPreset {
++    CUSTOM(0, 0, 0, 0, 0, SeedLodVegetationMode.HYBRID),
++    FAST(8, 128, 16, 32, 5, SeedLodVegetationMode.PROXY),
++    BALANCED(4, 64, 32, 64, 15, SeedLodVegetationMode.HYBRID),
++    ULTRA(4, 32, 64, 128, 30, SeedLodVegetationMode.HYBRID),
++    NEAR_LOSSLESS(4, 32, 64, 256, 50, SeedLodVegetationMode.NATIVE);
++
++    private final int minimumStride;
++    private final int maximumStride;
++    private final int qualityDropoff;
++    private final int nativeDistance;
++    private final int featureBudgetPercent;
++    private final SeedLodVegetationMode vegetationMode;
++
++    SeedLodQualityPreset(int minimumStride, int maximumStride, int qualityDropoff,
++                         int nativeDistance, int featureBudgetPercent,
++                         SeedLodVegetationMode vegetationMode) {
++        this.minimumStride = minimumStride;
++        this.maximumStride = maximumStride;
++        this.qualityDropoff = qualityDropoff;
++        this.nativeDistance = nativeDistance;
++        this.featureBudgetPercent = featureBudgetPercent;
++        this.vegetationMode = vegetationMode;
++    }
++
++    public int minimumStride() { return this.minimumStride; }
++    public int maximumStride() { return this.maximumStride; }
++    public int qualityDropoff() { return this.qualityDropoff; }
++    public int nativeDistance() { return this.nativeDistance; }
++    public int featureBudgetPercent() { return this.featureBudgetPercent; }
++    public SeedLodVegetationMode vegetationMode() { return this.vegetationMode; }
++}
 diff --git a/src/main/java/me/cortex/voxy/client/seedlod/SeedLodSurfacePolicy.java b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodSurfacePolicy.java
 new file mode 100644
 index 00000000..5070520a
@@ -2745,6 +3583,20 @@ index 00000000..5070520a
 +        return Math.max(Math.abs(chunkX - playerChunkX),
 +                Math.abs(chunkZ - playerChunkZ)) <= radius;
 +    }
++}
+diff --git a/src/main/java/me/cortex/voxy/client/seedlod/SeedLodVegetationMode.java b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodVegetationMode.java
+new file mode 100644
+index 00000000..cbd3734b
+--- /dev/null
++++ b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodVegetationMode.java
+@@ -0,0 +1,8 @@
++package me.cortex.voxy.client.seedlod;
++
++public enum SeedLodVegetationMode {
++    OFF,
++    PROXY,
++    HYBRID,
++    NATIVE
 +}
 diff --git a/src/main/java/me/cortex/voxy/common/world/SaveLoadSystem3.java b/src/main/java/me/cortex/voxy/common/world/SaveLoadSystem3.java
 index 0a6d31c2..a8842155 100644
@@ -3371,7 +4223,7 @@ index 1ab705b9..50f35cbb 100644
 +    }
  }
 diff --git a/src/main/resources/assets/voxy/lang/en_us.json b/src/main/resources/assets/voxy/lang/en_us.json
-index 08d1299b..2bb2088c 100644
+index 08d1299b..d7ee7340 100644
 --- a/src/main/resources/assets/voxy/lang/en_us.json
 +++ b/src/main/resources/assets/voxy/lang/en_us.json
 @@ -3,6 +3,7 @@
@@ -3382,12 +4234,20 @@ index 08d1299b..2bb2088c 100644
  
    "voxy.config.general.enabled": "Enable Voxy",
    "voxy.config.general.enabled.tooltip": "Fully enables or disables voxy",
-@@ -16,6 +17,55 @@
+@@ -16,6 +17,76 @@
    "voxy.config.general.ingest": "Chunk Ingest",
    "voxy.config.general.ingest.tooltip": "Enables or disables voxies ability to convert new chunks into LoDs",
  
 +  "voxy.config.general.seed_lod_enabled": "Seed-sampled distant terrain (experimental)",
 +  "voxy.config.general.seed_lod_enabled.tooltip": "In single-player Overworlds, predicts distant terrain from the seed without loading chunks. Existing and subsequently loaded chunk data stays authoritative.",
++
++  "voxy.config.general.seed_lod_quality_preset": "Seed LOD quality preset",
++  "voxy.config.general.seed_lod_quality_preset.tooltip": "Applies a coordinated generation profile. Custom keeps every advanced control below. Presets leave distance and thread count under your control.",
++  "voxy.config.general.seed_lod_quality_preset.custom": "Custom",
++  "voxy.config.general.seed_lod_quality_preset.fast": "Fast horizon",
++  "voxy.config.general.seed_lod_quality_preset.balanced": "Balanced",
++  "voxy.config.general.seed_lod_quality_preset.ultra": "Ultra",
++  "voxy.config.general.seed_lod_quality_preset.near_lossless": "Near-lossless",
 +
 +  "voxy.config.general.seed_lod_distance": "Seed LOD distance",
 +  "voxy.config.general.seed_lod_distance.tooltip": "Prediction radius from 32 to 1024 chunks. Very large values can take a long time and use substantial Voxy cache space.",
@@ -3428,6 +4288,19 @@ index 08d1299b..2bb2088c 100644
 +  "voxy.config.general.seed_lod_native_surface_distance": "Native surface distance",
 +  "voxy.config.general.seed_lod_native_surface_distance.tooltip": "Chunk radius from 16 to 256 where native surface rules replace the fast material approximation. Larger values improve matching but require more CPU time and temporary context memory.",
 +
++  "voxy.config.general.seed_lod_vegetation_mode": "Vegetation mode",
++  "voxy.config.general.seed_lod_vegetation_mode.tooltip": "Proxy uses lightweight silhouettes. Hybrid uses supported native features nearby and proxies farther away. Native attempts supported features throughout detailed generation while respecting the CPU budget.",
++  "voxy.config.general.seed_lod_vegetation_mode.off": "Off",
++  "voxy.config.general.seed_lod_vegetation_mode.proxy": "Proxy",
++  "voxy.config.general.seed_lod_vegetation_mode.hybrid": "Hybrid",
++  "voxy.config.general.seed_lod_vegetation_mode.native": "Native supported",
++
++  "voxy.config.general.seed_lod_native_vegetation_distance": "Native vegetation distance",
++  "voxy.config.general.seed_lod_native_vegetation_distance.tooltip": "Hybrid-mode radius from 16 to 256 chunks. Supported standard features run inside this radius and lightweight proxies continue outside it.",
++
++  "voxy.config.general.seed_lod_feature_budget": "Native feature CPU budget",
++  "voxy.config.general.seed_lod_feature_budget.tooltip": "Maximum rolling CPU share from 1% to 50% spent executing native features. When exhausted, Seed LOD immediately falls back to proxies instead of blocking terrain generation.",
++
 +  "voxy.config.general.seed_lod_threads": "Seed LOD threads",
 +  "voxy.config.general.seed_lod_threads.tooltip": "Background seed sampling threads. Changes now take effect while the world is open.",
 +  "voxy.config.general.seed_lod_debug_hud": "Seed LOD debug HUD",
@@ -3438,7 +4311,7 @@ index 08d1299b..2bb2088c 100644
    "voxy.config.general.rendering": "Voxy Rendering",
    "voxy.config.general.rendering.tooltip": "Enables or disables voxy rendering",
  
-@@ -38,4 +88,4 @@
+@@ -38,4 +109,4 @@
    "voxy.config.general.ssao_mode.basic": "Basic",
    "voxy.config.general.ssao_mode.better": "Better",
    "voxy.config.general.ssao_mode.best": "Best"
@@ -3523,6 +4396,38 @@ index 00000000..5a736b73
 +        assertEquals(0.0, result.cacheHitPercent());
 +    }
 +}
+diff --git a/src/test/java/me/cortex/voxy/client/seedlod/SeedLodFeatureBudgetTest.java b/src/test/java/me/cortex/voxy/client/seedlod/SeedLodFeatureBudgetTest.java
+new file mode 100644
+index 00000000..0ea53232
+--- /dev/null
++++ b/src/test/java/me/cortex/voxy/client/seedlod/SeedLodFeatureBudgetTest.java
+@@ -0,0 +1,26 @@
++package me.cortex.voxy.client.seedlod;
++
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class SeedLodFeatureBudgetTest {
++    @Test
++    void preservesASmallStartupBurst() {
++        assertEquals(5_000_000L, SeedLodFeatureBudget.allowance(0L, 15));
++    }
++
++    @Test
++    void scalesWithMeasuredWindowTime() {
++        assertEquals(150_000_000L,
++                SeedLodFeatureBudget.allowance(1_000_000_000L, 15));
++    }
++
++    @Test
++    void clampsExtremePercentages() {
++        assertEquals(10_000_000L,
++                SeedLodFeatureBudget.allowance(1_000_000_000L, 0));
++        assertEquals(500_000_000L,
++                SeedLodFeatureBudget.allowance(1_000_000_000L, 100));
++    }
++}
 diff --git a/src/test/java/me/cortex/voxy/client/seedlod/SeedLodFingerprintStoreTest.java b/src/test/java/me/cortex/voxy/client/seedlod/SeedLodFingerprintStoreTest.java
 new file mode 100644
 index 00000000..09531055
@@ -3578,6 +4483,94 @@ index 00000000..09531055
 +        assertNotEquals(firstMarker, secondMarker);
 +        assertTrue(firstMarker < (1L << 27));
 +        assertTrue(secondMarker < (1L << 27));
++    }
++}
+diff --git a/src/test/java/me/cortex/voxy/client/seedlod/SeedLodNativeFeatureSamplerTest.java b/src/test/java/me/cortex/voxy/client/seedlod/SeedLodNativeFeatureSamplerTest.java
+new file mode 100644
+index 00000000..36c1d751
+--- /dev/null
++++ b/src/test/java/me/cortex/voxy/client/seedlod/SeedLodNativeFeatureSamplerTest.java
+@@ -0,0 +1,42 @@
++package me.cortex.voxy.client.seedlod;
++
++import net.minecraft.world.level.levelgen.feature.Feature;
++import net.minecraft.server.Bootstrap;
++import net.minecraft.SharedConstants;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++final class SeedLodNativeFeatureSamplerTest {
++    @BeforeAll
++    static void bootstrapRegistries() {
++        SharedConstants.tryDetectVersion();
++        Bootstrap.bootStrap();
++    }
++
++    @Test
++    void acceptsStandardVisualVegetationFeatures() {
++        assertTrue(SeedLodNativeFeatureSampler.isDirectFeatureSupported(Feature.TREE, ""));
++        assertTrue(SeedLodNativeFeatureSampler.isDirectFeatureSupported(Feature.BAMBOO, ""));
++        assertTrue(SeedLodNativeFeatureSampler.isDirectFeatureSupported(
++                Feature.HUGE_RED_MUSHROOM, ""));
++    }
++
++    @Test
++    void acceptsCactusOnlyForBoundedPlacementTypes() {
++        assertTrue(SeedLodNativeFeatureSampler.isDirectFeatureSupported(
++                Feature.BLOCK_COLUMN, "minecraft:patch_cactus"));
++        assertFalse(SeedLodNativeFeatureSampler.isDirectFeatureSupported(
++                Feature.BLOCK_COLUMN, "minecraft:basalt_column"));
++    }
++
++    @Test
++    void rejectsUndergroundAndUnknownVisualWork() {
++        assertFalse(SeedLodNativeFeatureSampler.isDirectFeatureSupported(
++                Feature.ORE, "minecraft:ore_diamond"));
++        assertFalse(SeedLodNativeFeatureSampler.isDirectFeatureSupported(
++                Feature.LAKE, "minecraft:lake_lava"));
++    }
++}
+diff --git a/src/test/java/me/cortex/voxy/client/seedlod/SeedLodQualityPresetTest.java b/src/test/java/me/cortex/voxy/client/seedlod/SeedLodQualityPresetTest.java
+new file mode 100644
+index 00000000..42fe21dc
+--- /dev/null
++++ b/src/test/java/me/cortex/voxy/client/seedlod/SeedLodQualityPresetTest.java
+@@ -0,0 +1,34 @@
++package me.cortex.voxy.client.seedlod;
++
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++final class SeedLodQualityPresetTest {
++    @Test
++    void fastPresetPrioritizesHorizonThroughput() {
++        var preset = SeedLodQualityPreset.FAST;
++        assertEquals(8, preset.minimumStride());
++        assertEquals(128, preset.maximumStride());
++        assertEquals(SeedLodVegetationMode.PROXY, preset.vegetationMode());
++        assertEquals(5, preset.featureBudgetPercent());
++    }
++
++    @Test
++    void balancedPresetKeepsDetailedNearField() {
++        var preset = SeedLodQualityPreset.BALANCED;
++        assertEquals(4, preset.minimumStride());
++        assertEquals(64, preset.maximumStride());
++        assertEquals(64, preset.nativeDistance());
++        assertEquals(SeedLodVegetationMode.HYBRID, preset.vegetationMode());
++    }
++
++    @Test
++    void nearLosslessUsesTheStrictestSupportedBudget() {
++        var preset = SeedLodQualityPreset.NEAR_LOSSLESS;
++        assertEquals(32, preset.maximumStride());
++        assertEquals(256, preset.nativeDistance());
++        assertEquals(50, preset.featureBudgetPercent());
++        assertEquals(SeedLodVegetationMode.NATIVE, preset.vegetationMode());
 +    }
 +}
 diff --git a/src/test/java/me/cortex/voxy/client/seedlod/SeedLodSurfacePolicyTest.java b/src/test/java/me/cortex/voxy/client/seedlod/SeedLodSurfacePolicyTest.java
