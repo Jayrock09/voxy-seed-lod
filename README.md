@@ -1,286 +1,134 @@
 > [!WARNING]
-> **AI USE DISCLOSURE:** Generative AI was used heavily to design, implement, debug, document, and iterate on this experimental mod. Some of this is therefore, affectionately and occasionally literally, **AI slop**. I would be more than happy for an organic life form to audit it, clean it up, or remake the idea without the slop. Human-written improvements and clean-room reimplementations are extremely welcome.
+> **AI USE DISCLOSURE:** Generative AI was used heavily to design, implement, debug, document, and iterate on this experimental mod. Some of it may therefore be genuine AI slop. I would be more than happy for an organic life form to audit it, clean it up, or remake the idea without the slop. Human-written fixes and clean-room reimplementations are extremely welcome.
 
-# Voxy Seed LOD
+# Voxy Seed LOD Rewrite
 
-An unofficial experimental patch for [Voxy](https://github.com/MCRcortex/voxy) that predicts distant Overworld terrain directly from the integrated server's seed-backed `ChunkGenerator` without requesting or loading every faraway Minecraft chunk.
+This branch is a clean experimental rewrite of Seed LOD for [Voxy](https://github.com/MCRcortex/voxy).
 
-The goal is simple: fill Voxy's distant horizon quickly enough to be useful at 128 to 1024-chunk distances while keeping ordinary generated chunks authoritative when the player reaches them.
+Its goal is deliberately narrow:
+
+> Generate the real seed-backed terrain, vegetation, structures, and lighting that Voxy needs to render a distant horizon, while avoiding the gameplay and persistence cost of loading ordinary Minecraft chunks.
+
+The old hand-written terrain painter, proxy trees, biome-name guesses, smoothing system, sample-stride cockpit, and selective fake-feature fallbacks are not part of this rewrite.
 
 ## Important upstream notice
 
-Voxy is created by MCRcortex and is marked **All Rights Reserved / Do not redistribute**. This repository therefore does **not** contain Voxy's source or compiled JAR. It contains only the original patch, documentation, and instructions needed to apply the experiment to an authorized local checkout.
+Voxy is created by MCRcortex and is marked **All Rights Reserved / Do not redistribute**. This repository does not contain Voxy source code or a compiled Voxy JAR. It contains an original patch, documentation, and instructions for applying the experiment to an authorized local checkout.
 
-This project is unofficial, unsupported by MCRcortex, and not affiliated with Mojang or Microsoft. Do not report problems caused by this patch to upstream Voxy.
+This project is unofficial, unsupported by MCRcortex, and not affiliated with Mojang or Microsoft. Do not report rewrite problems to upstream Voxy.
 
-## What this adds
+## What the rewrite actually generates
 
-### Seed-sampled distant terrain
+Temporary `ProtoChunk` regions run the active integrated server's real generation code:
 
-- Samples the active single-player Overworld `ChunkGenerator` without creating faraway chunks.
-- Writes predictions into Voxy's existing voxel, mipping, storage, meshing, occlusion, and rendering pipeline.
-- Uses a distance-priority worker queue with at most 256 pending work units.
-- Worker-thread changes take effect while the world is open.
-- Begins at the tile containing the player. Existing real chunks fill the center while predictions continue directly outward.
-- Marks every prediction so later predictions may replace it while real ingested chunk data remains authoritative.
-- Supports prediction distances from 32 to 1024 chunks and sample strides of 4, 8, 16, 32, 64, or 128 blocks.
-- Places all experimental controls on a dedicated Seed LOD settings page instead of crowding Voxy's General page.
+1. Structure starts across Minecraft's required structure halo.
+2. Biome assignment from the active biome source.
+3. Noise terrain and aquifers.
+4. Surface rules.
+5. Carvers.
+6. Structure references and structure block placement.
+7. Full biome decoration, including real trees and visible datapack features.
+8. Minecraft's real synchronous sky-light and block-light propagation.
+9. Voxy extraction and mipping.
+10. Immediate disposal of the temporary region.
 
-### Player-centered connected loading wave
+This means vanilla and compatible datapack content uses its actual generator rules. The rewrite does not infer an oak from a biome name or replace a structure with a silhouette.
 
-- Scans outward in 4 by 4-chunk tiles and starts with the tile containing the player.
-- Schedules complete square rings from nearest to farthest. Ring N+1 cannot start until every in-range tile in ring N finishes, so unfinished work stays on the outer edge instead of leaving holes behind it.
-- Sorts the 16 chunks inside each tile by player distance before inserting them.
-- Shares one generator sample grid across each work unit, removing repeated chunk-border and halo queries.
-- Stride 16 through 128 also share generator samples between adjacent work units through a bounded world-aligned cache.
-- Uses ordinary bottom-up chunk insertion at stride 4 and 8, then direct N-sized Voxy cells at stride 16 through 128.
-- Coalesces N-sized scan tiles into complete aligned Voxy sections: 128 blocks at level 2, 256 blocks at level 3, and 512 blocks at level 4.
-- Claims each aligned coarse section once across all workers, reducing scheduling, locking, mipping, and publication overhead.
-- Keeps real ingested chunks authoritative and safely upgrades predicted tiles when the player moves closer.
-- Recenters after four chunks of movement. A teleport of at least 32 chunks cancels stale queued work and begins a new wave at the destination.
+## What it intentionally skips
 
-### Distance-based quality
+The temporary chunks are never exposed through the live server chunk map. They receive no tickets and are never loaded as gameplay chunks.
 
-- With adaptive quality enabled, nearby work begins at the configured minimum stride of 4, 8, or 16. Outward bands double that interval until reaching the configured maximum of 32, 64, or 128.
-- A configurable band width from 4 to 64 chunks controls when each quality drop happens. A width of 4 doubles the stride every 4 chunks, while 64 preserves each tier for 64 chunks.
-- Sampling is aligned to a global world-space lattice, so strides larger than the 64-block loading tile remain continuous across tile borders.
-- The selected quality and output size are decided before a work unit is generated.
-- Moving closer can regenerate an existing predicted region at a finer stride. Moving away does not waste time downgrading completed data.
-- Voxy still chooses its rendered screen-space LOD normally after the predicted chunks enter the cache.
+The rewrite also skips:
 
-### Direct N-sized generation
+- Chunk saves and region-file persistence.
+- Network chunk packets and client chunk objects.
+- Entity creation, mob spawning, and entity ticking.
+- Points of interest.
+- Scheduled block and fluid ticks.
+- Spawn-stage generation.
+- Block-entity runtime behavior and loot initialization.
+- Advancement, map, and other gameplay bookkeeping.
 
-- Optional and enabled by default. Disable it to retain seedlod.11-style level-0 reconstruction.
-- Stride 4 and 8 keep one-block output for the two highest-quality bands.
-- Stride 16 generates N=4 cells directly at Voxy level 2.
-- Stride 32 generates N=8 cells directly at Voxy level 3.
-- Stride 64 generates N=16 cells directly at Voxy level 4.
-- Stride 128 retains N=16 cells at level 4 but reduces seed sampling for the farthest horizon band.
-- Every N-sized job fills a complete horizontal native Voxy section before publishing it. A finer child therefore never hides an unfinished portion of its coarser parent.
-- Coarse leaves have their own persistent presence state instead of falsely claiming finer children exist.
-- Before refinement becomes visible, every non-air sibling covered by the coarse parent is initialized from that parent. The entire child mask is safe before Voxy hides the parent, so partial quality transitions cannot expose rectangular sky holes.
-- Sibling coverage completion is stored with the section. Expansion normally runs once per coarse section, and seedlod.15 automatically repairs incomplete hierarchy coverage saved by older patch versions.
-- Existing finer octants are preserved while uncovered octants inherit the fallback. Fine predictions or authoritative real chunks then overlay that background.
-- Parent fallback cells remain populated even where finer children exist, preventing screen-space LOD selection from exposing rectangular holes. Finer child sections remain untouched, and authoritative unmarked parent cells are preserved.
+Visible block states placed by structures and features are extracted. Runtime data behind chests, signs, mobs, and similar gameplay objects is discarded.
 
-### Diagnostics and hierarchy validation
+## N-sized output
 
-- An optional debug HUD reports the current radius, player stride, active ring, queued and running work, completed jobs, generator samples per second, generated sections and cells per second, cache hit rate, queue latency, cancellations, hierarchy repairs, real replacements, and estimated Seed LOD memory.
-- An optional conceptual map colors completed generation tiles by Voxy output level. Work in progress is white and missing work is dark, making scheduling and quality-band problems visible without altering world geometry.
-- `/voxy seedlod debug` toggles the HUD. `/voxy seedlod stats` prints the same diagnostics to chat for logs and bug reports.
-- Nine automated tests exercise the hierarchy invariants that prevent rectangular holes. They include concurrent sibling publication, negative coordinates, old-cache repair, and save/reload of coarse hierarchy state.
-- Instrumentation uses worker-friendly adders and calculates rolling rates on the client thread. Both HUD options are disabled by default.
+N-sized generation remains, but it is now an honest output optimization.
 
-### Generation benchmark
+- The high-detail radius publishes one-block Voxy input.
+- The next distance bands publish Voxy level 2, level 3, and level 4 cells.
+- Every coarse work unit is complete and aligned before publication.
+- Coarse parents remain valid while finer children replace them.
+- Real loaded chunks are authoritative, including completely empty real sections.
 
-- Run `/voxy seedlod benchmark` while Seed LOD is actively filling a new horizon. The default run is 30 seconds.
-- Use `/voxy seedlod benchmark <seconds>` for a 5 to 300 second measurement.
-- Results appear in chat and include the generator class, samples per second, CPU time per sample, run-local cache hit rate, scheduled chunk-area per second, cells and sections per second, queue latency, job outcomes, peak pending work, and estimated memory change.
-- The run finishes early if the requested horizon completes. For comparable Vanilla, Tectonic, or Terralith results, use the same seed, position, settings, empty prediction cache, and duration in a separate world load.
-- Scheduled chunk-area is an area-throughput metric. Refinement can cover the same area more than once at progressively finer quality, so it is not a count of unique Minecraft chunks loaded.
+The distant path uses 8 by 8 disposable generation batches instead of repeatedly creating 4 by 4 regions. This amortizes structure-halo, feature-border, lighting, and setup work. Near the player, 4 by 4 batches keep refinement responsive.
 
-### Generator and datapack fingerprinting
+N-sized extraction reduces conversion, Voxy storage, hierarchy updates, meshing, and rendered geometry. It does not pretend that Minecraft can produce exact structures and vegetation without executing the generation stages that decide them.
 
-- Each local world receives a small `seedlod-fingerprint.properties` sidecar beside its Voxy world storage.
-- The fingerprint covers the seed, Seed LOD prediction schema, generator and biome-source types, serialized generator settings, sea level, world height, and deterministic terrain, biome, and surface probes.
-- If the fingerprint changes, Seed LOD reports it in chat and regenerates the configured horizon through the normal nearest-first wave. Existing marked predictions are replaceable, while unmarked real chunks remain authoritative and are never cleared by this process.
-- Predictions outside the currently configured horizon are refreshed when that horizon is extended or the player moves into range.
-- The debug HUD and benchmark report show the first eight fingerprint characters so results from different datapack or generator configurations are easy to distinguish.
+## Performance expectations
 
-### Automatic outer-quality target
+The intended advantage over ordinary chunk loading comes from everything the rewrite does not do: no chunk-map integration, disk save, networking, entity systems, POI work, persistent light storage, client chunks, or retained full-resolution faraway chunks.
 
-- Enable `Automatic outer quality target` to let Seed LOD calibrate once from the first completed inner rings.
-- Choose a target initial-horizon time from 15 to 120 seconds. The default target is 30 seconds.
-- The estimator can select outer stride 32, 64, or 128. It changes only the farthest stride cap, leaving nearby minimum quality and the configured band width untouched.
-- A wide hysteresis band and one-decision-per-world rule prevent quality oscillation. If the choice changes, obsolete queued work is cancelled with the existing generation token and compatible completed inner work remains reusable.
-- The debug HUD reports `calibrating`, `manual`, or the locked stride with its projected and target times.
-- This option is disabled by default while real hardware and datapack benchmark results are collected.
+There is an unavoidable tradeoff. Exact terrain, structures, decoration, and lighting cost much more CPU than the older approximate seed sampler. At very large distances, Minecraft still has to decide every real block before the rewrite can safely call the result real. N-sized output helps substantially after generation, but it cannot make full decoration free.
 
-### Terrain quality
+The branch currently has compile-time and automated-test validation. It does not yet claim a measured speedup on every CPU or datapack. Vanilla, Tectonic, Terralith, and other generator benchmarks are required before making numerical claims.
 
-- Optional adaptive sampling starts at the configured minimum and progressively increases through power-of-two bands toward the configured horizon maximum.
-- Nearby noise-based terrain can evaluate the active generator's real surface-rule graph for each requested lattice point. This improves datapack snowlines, beaches, badlands materials, rocky slopes, mud, podzol, terracotta, calcite, basalt, and other rule-selected blocks without generating complete chunks.
-- Native surface evaluation defaults to a 64-chunk radius and can be configured from 16 to 256 chunks. The fast cached material approximation remains active outside that radius.
-- A bounded virtual-chunk context supplies real preliminary-surface noise and lazy seed-backed heightmap answers. It never calls full noise fill, carvers, decoration, chunk registration, or chunk saving.
-- Optional terrain smoothing reconstructs continuous surfaces between sparse samples. The two nearest quality bands use one-block columns, while direct N-sized bands emit larger cells.
-- Large height changes use continuous slope-aware interpolation, keeping cliffs steep without creating stride-sized towers.
-- Most predicted terrain is only a four-block surface shell. A one-block reconstruction halo identifies exposed drops and extends only those visible cliff edges to the lower adjacent surface.
-- Predicted outdoor air carries full skylight, preventing black terrain in daylight.
-- Ocean floors remain represented, but water is a single flat visible layer at one block below the active generator's datapack sea-level boundary. Vanilla sea level 63 therefore places the top predicted water block at Y=62. Water is not smoothed as terrain or filled down to the seafloor, preventing it from climbing mountains.
+## Settings
 
-### Lightweight vegetation proxies
+The rewrite intentionally exposes only a small Seed LOD page:
 
-- Deterministic biome-aware oak, birch, spruce, jungle, acacia, dark-oak, cherry, and mangrove-style silhouettes.
-- Irregular layered crowns instead of simple leaf cubes.
-- Tiered conifers and bent/branched flat-canopy trees.
-- World-space local-minimum placement replaces fixed chunk quadrants, removing obvious rows and stripes.
-- Placement is stable for a given seed but intentionally does not claim to reproduce Minecraft's exact decoration stage.
-- Tree density fades continuously with player distance and never reaches a hard zero ring. Very distant bands retain sparse silhouettes without an obvious forest border.
+- **Enabled:** Turns disposable real generation on or off.
+- **Distance:** 32 to 1024 chunks.
+- **High-detail radius:** 32 to 256 chunks before N-sized output steps down.
+- **Threads:** Background disposable world-generation workers.
+- **Debug HUD and map:** Shows throughput, stage timings, queue state, hierarchy repair, real replacement, and estimated temporary memory.
 
-### Sparse native vegetation and datapack features
+Use `/voxy seedlod stats` for the same diagnostic information in chat.
 
-- A bounded virtual `WorldGenLevel` can execute supported biome placed-features without registering, lighting, saving, or retaining Minecraft chunks.
-- The virtual feature sink reads seed-backed terrain heights and biomes, captures only sparse block writes, and never exposes the integrated server's live chunk source.
-- Capability-driven support includes standard and datapack trees, fallen trees, huge mushrooms, bamboo, huge fungus, and cactus-style simple or block-column features.
-- Selector and sequence wrappers are accepted only when every reachable configured feature is supported. Unknown or incompatible graphs fail closed and use proxies.
-- Four vegetation modes are available: Off, Proxy, Hybrid, and Native supported. Hybrid uses native features nearby and proxies at long distance.
-- A rolling 1 to 50 percent CPU budget prevents native decoration from stalling terrain coverage. Exhausted work falls back immediately.
-- Feature execution is bounded to a sparse 16,384-block capture and a 40-block reach. Successful feature passes that place nothing remain empty rather than receiving a fake tree.
+## Safety and cache behavior
 
-This is still selective feature execution, not Minecraft's full decoration stage. Structures, ores, carvers, entities, block entities, neighbor-dependent features, and unsupported mod feature types are not run.
+Predicted mapping IDs carry a private marker. New predictions may refresh old predictions, but they cannot overwrite sections known to come from real chunks. When a real chunk arrives, it replaces predicted Voxy data and repairs the parent hierarchy.
 
-### Datapack awareness
+A generator fingerprint covers the seed, prediction schema, generator type, biome source, height, sea level, and serialized generator settings. A mismatch causes predictions to be refreshed instead of silently presenting terrain from an old datapack setup.
 
-- Terrain shape and biome selection come from the active generator, so vanilla-style noise-settings datapacks participate automatically.
-- A fast datapack mode uses early-exit height queries instead of constructing a complete vertical noise column for every sample.
-- Fast mode requires one solid-surface height query per lattice point on both land and ocean.
-- Within the configured native-surface radius, noise-based generators use their actual `SurfaceRules` graph for top-material selection.
-- Native evaluation is per requested Seed LOD sample. It does not run Minecraft's complete surface stage across all 256 columns.
-- Custom-biome profiles are cached.
-- Biome tags, identifiers, climate, and placed-feature identifiers help infer proxy tree density and species.
-- Outside the native radius, common vanilla-block surface themes such as grass, snow, stone, sand, gravel, mud, calcite, and basalt are approximated from biome metadata.
+## Current validation
 
-This is useful for datapacks such as Tectonic, Terralith, and other vanilla-style terrain/biome packs. Native surface rules improve nearby material matching, while supported placed-feature graphs can add their actual seed-driven vegetation. Unsupported decoration retains the lightweight proxy path. Custom generators that do not use `NoiseBasedChunkGenerator` retain the compatibility approximation path.
+The rewrite branch currently passes:
 
-### Coordinated quality presets
+- Full Gradle build for Minecraft 26.2.
+- Generator-fingerprint tests.
+- Distance-to-N-size scheduling tests.
+- Coarse-parent and fine-child hierarchy tests.
+- Negative-coordinate hierarchy tests.
+- Concurrent sibling publication tests.
+- Saved hierarchy repair tests.
 
-| Preset | Stride | Band width | Native radius | Vegetation | Feature budget |
-|---|---:|---:|---:|---|---:|
-| Fast Horizon | 8 to 128 | 16 chunks | Approximate surfaces | Proxy | 5% |
-| Balanced | 4 to 64 | 32 chunks | 64 chunks | Hybrid | 15% |
-| Ultra | 4 to 32 | 64 chunks | 128 chunks | Hybrid | 30% |
-| Near-lossless | 4 to 32 | 64 chunks | 256 chunks | Native supported | 50% |
-| Custom | User controlled | User controlled | User controlled | User controlled | User controlled |
+The build succeeding does not replace in-game validation. Structure-border behavior, complicated datapack decoration, lighting boundaries, memory peaks, and real throughput still need field testing.
 
-Presets coordinate the full generation pipeline instead of changing one slider in isolation. Prediction distance and worker-thread count always remain independent. Custom is migration-safe and preserves the advanced controls already stored in `voxy-config.json`.
+## Apply the rewrite patch
 
-## Recommended starting settings
-
-| Setting | Recommendation | Notes |
-|---|---:|---|
-| Quality preset | `Balanced` | Use Custom to retain manual control of every setting |
-| Seed LOD distance | `192` | Radius in chunks |
-| Minimum adaptive stride | `4` | Best nearby predictions; use 8 or 16 only for faster initial coverage |
-| Maximum sample stride | `64` quality, `128` speed | Stride 128 cuts far-section seed queries but retains less terrain detail |
-| Seed LOD threads | `4` | Changes take effect immediately |
-| Adaptive quality | On | Starts at minimum and doubles each band until reaching maximum |
-| Adaptive quality band width | `32` | Each stride tier lasts 32 chunks |
-| Direct N-sized generation | On | Skips unnecessary fine reconstruction in stride 16 through 128 bands |
-| Smooth sampled terrain | On | Large quality gain for little additional sampling cost |
-| Predicted vegetation | On | Cheap visual proxies |
-| Fast datapack terrain sampling | On | Recommended for noise-settings datapacks |
-| Native surface rules | On | Uses the active noise generator's real surface rules near the player |
-| Native surface distance | `64` | Raise for more matching or lower to protect generation speed |
-
-The normal Voxy render distance must also be large enough to display the predicted range.
-
-## Performance model
-
-Stride 4 and 8 retain 64 by 64-block jobs. Without cross-work reuse, each detailed job and its interpolation halo needs:
-
-- 324 generator samples at stride 4.
-- 100 samples at stride 8.
-
-N-sized bands use complete native sections instead of 64-block patches. Stride 16 generates a 128-block level-2 section, stride 32 generates a 256-block level-3 section, and stride 64 or 128 generates a 512-block level-4 section. The cold sample grids are 10 by 10 at strides 16, 32, and 64, then 6 by 6 at stride 128. Adjacent sections reuse their world-aligned halo samples through a cache bounded at 500,000 entries.
-
-The larger work units do not increase total native output. Each contains 32 by 32 horizontal cells. They reduce the number of jobs and hierarchy publications over the same area by 4 times at level 2, 16 times at level 3, and 64 times at level 4 compared with seedlod.12's partial 64-block jobs.
-
-Stride 128 is the new performance cutoff. At level 4 it reduces cold generator queries from 100 to 36 compared with stride 64 while keeping the same N=16 output size. Stride 256 would reduce the grid to 4 by 4, but that saves only 20 additional queries after stride 128 while losing much more seed detail. Stride 512 saves only another 7. The absolute gains are diminishing after 128, while the visual approximation keeps worsening.
-
-Seedlod.10 also removes a second bottleneck that sample stride alone did not fix. On flat land, older versions filled roughly one stride of solid blocks below every surface column. The four-block shell reduces flat-column voxel writes by about 2 times at stride 8, 4 times at stride 16, 8 times at stride 32, and 16 times at stride 64. Exposed cliff columns still extend far enough to close the visible face, so actual savings depend on terrain shape.
-
-N-sized generation removes most of the remaining far-field reconstruction. Each aligned coarse work unit contains 1,024 native horizontal cells. Compared with reconstructing every one-block column over the same footprint, N=4 reduces horizontal output by 16 times, N=8 by 64 times, and N=16 by 256 times before vertical cliff, water, vegetation, hierarchy, storage, and meshing costs.
-
-The largest savings happen at the horizon, which also contains most of the tiles. Terrain becomes visible near the player immediately and expands as workers finish each gated ring.
-
-- Smoothing adds interpolation work but no additional generator queries.
-- Direct coarse leaves are persisted separately from their finer-child mask. Seedlod.13 publishes complete aligned N-sized sections, seedlod.14 keeps their parent fallback geometry populated, and seedlod.15 materializes every required sibling before exposing a finer hierarchy level.
-- Ordinary movement keeps nearby queued work alive. Long teleports discard stale work and reprioritize the destination.
-- Changing either stride limit or the adaptive-quality toggle while a world is open immediately cancels stale plans and rescans the wave at the new quality.
-- Vegetation is hash-thinned before the more expensive local-minimum test. Density falls continuously with distance but never ends at a quality-band border.
-- Predicted mapping IDs are cached per block state and biome, avoiding repeated mapper lock traffic across thousands of matching columns.
-- Oceans use one visible sea-level water block per column instead of complete water volumes. This greatly reduces voxel writes and allocated vertical sections over deep water.
-- Redesigned trees perform more tiny hash checks but produce roughly the same amount of leaf geometry as the earlier proxy implementation.
-- A 1,024-chunk placement simulation averaged 3.95 vegetation candidates per chunk with no preferred local X/Z lane.
-- Fast datapack sampling is expected to improve expensive noise-datapack sampling by roughly 1.5 to 4 times compared with this patch's former full-column approach. This is an engineering estimate, not a universal benchmark.
-- Native surface evaluation adds a real `SurfaceRules` lookup plus lazy nearby height queries. The 256-entry virtual-context cache amortizes noise-context setup, while the configurable radius prevents that cost from spreading across the full horizon.
-- Tectonic and similar packs may remain slower than vanilla because their density functions are inherently more expensive.
-
-This is still not a custom planetary renderer. A 192-chunk radius contains roughly 115,000 chunk positions, and Voxy must still sample terrain, store sections, and build geometry. N-sized output removes most fine reconstruction at long distances, but exact speedups depend heavily on the generator, storage, CPU, and enabled vegetation.
-
-### GPU offload finding
-
-Voxy already uses OpenGL compute for visibility, node management, and rendering. The expensive seed prediction work is different: Minecraft's `ChunkGenerator`, density functions, biome sources, surface rules, and datapack codecs execute as Java objects on the CPU. OpenGL or OpenCL cannot directly execute those objects.
-
-Offloading only interpolation would still require uploading samples and reading reconstructed block results back to Java before Voxy can assign mapping IDs, build its CPU voxel hierarchy, and store the cache. That readback introduces synchronization and can stall the render thread, so this patch does not provide a fake GPU toggle that is likely to run slower. A real generic GPU generator would require a separate shader compiler for Minecraft density functions and surface rules, plus a GPU-native Voxy ingestion path. That is a major renderer project rather than a safe setting.
-
-The patch instead applies hardware-acceleration thinking where this architecture benefits: shared generator samples, native N-sized output, fewer mapper locks, fewer voxel writes, fewer vertical sections, bounded background threads, and Voxy's existing GPU renderer after ingestion.
-
-Exact trees and structures would require most of Minecraft's generation pipeline through the `FEATURES` stage and a working neighborhood of temporary chunks. This patch deliberately stays approximate to retain its main performance advantage.
-
-## Compatibility and limitations
-
-- Minecraft Java `26.2`
-- Fabric Loader
-- Fabric API, Sodium, and the dependencies required by the matching Voxy development build
-- Single-player Overworld only
-- Multiplayer clients do not receive the server's complete seed/generator state
-- No exact structures, caves, complete decoration stage, player edits, or unsupported feature types
-- Direct N-sized generation is new experimental hierarchy code. Disable it if a renderer or storage compatibility problem appears
-- A 1024-chunk radius contains millions of chunk positions. The slider allows it, but generation time and cache usage remain substantial even at stride 128
-- Custom `ChunkGenerator` implementations fall back to the compatibility column path
-- Native surface rules currently apply to noise-based generators only and select top materials only
-- Native placed-feature execution is deliberately capability-limited. Unsupported or chunk-dependent feature graphs use proxies
-- Experimental code: back up important worlds and Voxy caches
-
-## Applying the patch
-
-The patch targets Voxy commit `337b919d6638cce3d65264efb10b0d20cd060010` on the development line used for Minecraft 26.2.
+Start from Voxy commit `337b919d6638cce3d65264efb10b0d20cd060010`, create your own local branch, then apply:
 
 ```bash
-git clone https://github.com/MCRcortex/voxy.git
-cd voxy
-git checkout 337b919d6638cce3d65264efb10b0d20cd060010
-git apply /path/to/voxy-seed-lod-mc26.2.patch
+git am /path/to/voxy-seed-lod-rewrite-mc26.2.patch
 ```
 
-Build using the JDK required by that Voxy/Minecraft version:
+The rewrite patch is in [`patches/voxy-seed-lod-rewrite-mc26.2.patch`](patches/voxy-seed-lod-rewrite-mc26.2.patch).
+
+Build with the JDK and Gradle configuration required by upstream Voxy:
 
 ```bash
 ./gradlew build
 ```
 
-On Windows:
+Windows:
 
 ```powershell
 .\gradlew.bat build
 ```
 
-The patch is available at [`patches/voxy-seed-lod-mc26.2.patch`](patches/voxy-seed-lod-mc26.2.patch).
+## Design contract
 
-## Cache migration
+The full enhanced implementation prompt and architecture contract are in [`REWRITE_SPEC.md`](REWRITE_SPEC.md).
 
-Seedlod.14 repairs parent fallback coverage and corrects stored predicted water height. A clean cache is required when upgrading from seedlod.13 or any earlier seedlod version so missing parent cells and one-block-high water are regenerated. Close Minecraft, back up the world, and remove only that world's `<world save>/voxy` derived-cache folder before launching seedlod.14.
-
-This cleanup is also required for caches touched by seedlod.6 and seedlod.7 direct-parent experiments or the original unmarked seedlod.1 experiment.
-
-Do not delete the complete world folder.
-
-## Verification
-
-The published patch version compiled successfully and passed Voxy's Gradle build, 29-test suite, resource processing, and access-widener validation before publication. Native surface and feature paths still need broad in-game runtime testing across movement, restarts, seeds, and datapacks.
-
-## Contributing
-
-Please do improve it. In particular, an organic life form replacing the AI-slop portions with clearer architecture, tests, benchmarks, or a clean-room implementation would be genuinely appreciated.
-
-Useful contribution areas include:
-
-- Real profiling across vanilla, Tectonic, and Terralith seeds
-- Broader native surface-rule compatibility and visual regression tests
-- More natural proxy vegetation without running full decoration
-- Safe structure-location silhouettes
-- Automated visual and cache-migration tests
-- Code cleanup, because the AI has undoubtedly hidden at least one tiny goblin in here
-
-When reporting performance, include CPU, Java version, seed, datapacks, distance, stride, thread count, and whether adaptive quality/smoothing/vegetation were enabled.
+The short version is this: let Minecraft generate the visible world content for real, discard everything that exists only for gameplay, and never silently fall back to fake terrain or fake vegetation.
