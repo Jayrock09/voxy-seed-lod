@@ -1,5 +1,13 @@
 # Rewrite changelog
 
+## rewrite.4
+
+- Fixed disposable chunks being downgraded from `CARVERS` to `STRUCTURE_REFERENCES` immediately before feature placement.
+- Moved structure references into vanilla's correct stage order before biome and terrain generation.
+- Made every disposable chunk status update monotonic so completed generation stages cannot be lost.
+- Added regression tests for backward and forward chunk-status transitions.
+- Bumped the prediction schema to `103` so failed rewrite.3 output is treated as stale.
+
 ## rewrite.3
 
 - Fixed feature placement failing when a placement modifier checked the biome beyond the previous two-chunk decoration halo.

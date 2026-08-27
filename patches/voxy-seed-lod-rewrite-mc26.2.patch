@@ -1,6 +1,6 @@
-From 0d31bfb8a71bd40b0c3b091355a568fd6e6df345 Mon Sep 17 00:00:00 2001
+From 524884e95ec738b7af3327fe8e275d609c1eeab1 Mon Sep 17 00:00:00 2001
 From: Jayrock09 <133281095+Jayrock09@users.noreply.github.com>
-Date: Thu, 27 Aug 2026 15:25:14 -0500
+Date: Thu, 27 Aug 2026 16:46:32 -0500
 Subject: [PATCH] Rewrite Seed LOD around disposable real world generation
 
 ---
@@ -16,7 +16,7 @@ Subject: [PATCH] Rewrite Seed LOD around disposable real world generation
  .../voxy/client/seedlod/SeedLodManager.java   | 509 ++++++++++++++++++
  .../voxy/client/seedlod/SeedLodMetrics.java   | 171 ++++++
  .../rewrite/DisposableChunkHolder.java        |  58 ++
- .../rewrite/DisposableGenerationRegion.java   | 188 +++++++
+ .../rewrite/DisposableGenerationRegion.java   | 196 +++++++
  .../rewrite/DisposableLightVolume.java        | 110 ++++
  .../rewrite/DisposableVoxyExtractor.java      | 102 ++++
  .../voxy/common/world/SaveLoadSystem3.java    |   6 +-
@@ -25,8 +25,9 @@ Subject: [PATCH] Rewrite Seed LOD around disposable real world generation
  .../resources/assets/voxy/lang/en_us.json     |  18 +-
  .../seedlod/SeedLodFingerprintStoreTest.java  |  51 ++
  .../seedlod/SeedLodRewritePlanTest.java       |  26 +
+ .../DisposableGenerationRegionTest.java       |  31 ++
  .../world/WorldUpdaterHierarchyTest.java      | 195 +++++++
- 22 files changed, 2270 insertions(+), 9 deletions(-)
+ 23 files changed, 2309 insertions(+), 9 deletions(-)
  create mode 100644 src/main/java/me/cortex/voxy/client/seedlod/SeedLodDebugHud.java
  create mode 100644 src/main/java/me/cortex/voxy/client/seedlod/SeedLodFingerprintStore.java
  create mode 100644 src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java
@@ -37,6 +38,7 @@ Subject: [PATCH] Rewrite Seed LOD around disposable real world generation
  create mode 100644 src/main/java/me/cortex/voxy/client/seedlod/rewrite/DisposableVoxyExtractor.java
  create mode 100644 src/test/java/me/cortex/voxy/client/seedlod/SeedLodFingerprintStoreTest.java
  create mode 100644 src/test/java/me/cortex/voxy/client/seedlod/SeedLodRewritePlanTest.java
+ create mode 100644 src/test/java/me/cortex/voxy/client/seedlod/rewrite/DisposableGenerationRegionTest.java
  create mode 100644 src/test/java/me/cortex/voxy/common/world/WorldUpdaterHierarchyTest.java
 
 diff --git a/build.gradle b/build.gradle
@@ -71,7 +73,7 @@ index 66ee48a1..b9b2efc5 100644
 \ No newline at end of file
 +}*/
 diff --git a/gradle.properties b/gradle.properties
-index a25ea295..e1d0efcf 100644
+index a25ea295..4c792c50 100644
 --- a/gradle.properties
 +++ b/gradle.properties
 @@ -29,6 +29,6 @@ nvidium_version=0.4.3-beta13-26.1
@@ -79,7 +81,7 @@ index a25ea295..e1d0efcf 100644
  
  # Mod Properties
 -mod_version = 0.2.19-beta
-+mod_version = 0.2.19-beta-rewrite.3
++mod_version = 0.2.19-beta-rewrite.4
  maven_group = me.cortex
 -archives_base_name = voxy
 \ No newline at end of file
@@ -431,7 +433,7 @@ index 00000000..8ec11884
 +}
 diff --git a/src/main/java/me/cortex/voxy/client/seedlod/SeedLodFingerprintStore.java b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodFingerprintStore.java
 new file mode 100644
-index 00000000..ab317b44
+index 00000000..891da12d
 --- /dev/null
 +++ b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodFingerprintStore.java
 @@ -0,0 +1,107 @@
@@ -454,7 +456,7 @@ index 00000000..ab317b44
 +/** Small sidecar used to detect world-generator changes without touching real Voxy data. */
 +public final class SeedLodFingerprintStore {
 +    static final int FORMAT_VERSION = 1;
-+    static final int PREDICTION_VERSION = 102;
++    static final int PREDICTION_VERSION = 103;
 +
 +    private SeedLodFingerprintStore() {}
 +
@@ -1300,10 +1302,10 @@ index 00000000..20eaaf7b
 +}
 diff --git a/src/main/java/me/cortex/voxy/client/seedlod/rewrite/DisposableGenerationRegion.java b/src/main/java/me/cortex/voxy/client/seedlod/rewrite/DisposableGenerationRegion.java
 new file mode 100644
-index 00000000..3f848a9b
+index 00000000..43d41d19
 --- /dev/null
 +++ b/src/main/java/me/cortex/voxy/client/seedlod/rewrite/DisposableGenerationRegion.java
-@@ -0,0 +1,188 @@
+@@ -0,0 +1,196 @@
 +package me.cortex.voxy.client.seedlod.rewrite;
 +
 +import net.minecraft.server.level.ServerLevel;
@@ -1369,6 +1371,11 @@ index 00000000..3f848a9b
 +
 +        long structureStarted = System.nanoTime();
 +        cache.forEach(holder -> this.createStructureStarts(holder.getLatestChunk()));
++        forEachSquare(originX - FEATURE_HALO, originZ - FEATURE_HALO,
++                targetChunks + FEATURE_HALO * 2, (chunkX, chunkZ) -> {
++                    ChunkAccess chunk = cache.get(chunkX, chunkZ).getLatestChunk();
++                    this.createStructureReferences(cache, chunk);
++                });
 +        long structureNanos = System.nanoTime() - structureStarted;
 +
 +        long terrainStarted = System.nanoTime();
@@ -1376,11 +1383,6 @@ index 00000000..3f848a9b
 +        long terrainNanos = System.nanoTime() - terrainStarted;
 +
 +        long decorationStarted = System.nanoTime();
-+        forEachSquare(originX - FEATURE_HALO, originZ - FEATURE_HALO,
-+                targetChunks + FEATURE_HALO * 2, (chunkX, chunkZ) -> {
-+                    ChunkAccess chunk = cache.get(chunkX, chunkZ).getLatestChunk();
-+                    this.createStructureReferences(cache, chunk);
-+                });
 +        forEachSquare(originX - FEATURE_HALO, originZ - FEATURE_HALO,
 +                targetChunks + FEATURE_HALO * 2, (chunkX, chunkZ) -> {
 +                    ChunkAccess chunk = cache.get(chunkX, chunkZ).getLatestChunk();
@@ -1469,7 +1471,15 @@ index 00000000..3f848a9b
 +    }
 +
 +    private static void setStatus(ChunkAccess chunk, ChunkStatus status) {
-+        if (chunk instanceof ProtoChunk proto) proto.setPersistedStatus(status);
++        if (chunk instanceof ProtoChunk proto) {
++            ChunkStatus current = proto.getPersistedStatus();
++            ChunkStatus advanced = advancedStatus(current, status);
++            if (advanced != current) proto.setPersistedStatus(advanced);
++        }
++    }
++
++    static ChunkStatus advancedStatus(ChunkStatus current, ChunkStatus requested) {
++        return current.isOrAfter(requested) ? current : requested;
 +    }
 +
 +    private static void forEachSquare(int originX, int originZ, int size,
@@ -2486,6 +2496,43 @@ index 00000000..95819f4f
 +        assertEquals(8, SeedLodManager.workSizeChunks(2));
 +        assertEquals(16, SeedLodManager.workSizeChunks(3));
 +        assertEquals(32, SeedLodManager.workSizeChunks(4));
++    }
++}
+diff --git a/src/test/java/me/cortex/voxy/client/seedlod/rewrite/DisposableGenerationRegionTest.java b/src/test/java/me/cortex/voxy/client/seedlod/rewrite/DisposableGenerationRegionTest.java
+new file mode 100644
+index 00000000..3ff1ec13
+--- /dev/null
++++ b/src/test/java/me/cortex/voxy/client/seedlod/rewrite/DisposableGenerationRegionTest.java
+@@ -0,0 +1,31 @@
++package me.cortex.voxy.client.seedlod.rewrite;
++
++import net.minecraft.SharedConstants;
++import net.minecraft.server.Bootstrap;
++import net.minecraft.world.level.chunk.status.ChunkStatus;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertSame;
++
++class DisposableGenerationRegionTest {
++    @BeforeAll
++    static void bootstrapMinecraft() {
++        SharedConstants.tryDetectVersion();
++        Bootstrap.bootStrap();
++    }
++
++    @Test
++    void structureReferencesCannotRegressGeneratedTerrain() {
++        assertSame(ChunkStatus.CARVERS, DisposableGenerationRegion.advancedStatus(
++                ChunkStatus.CARVERS, ChunkStatus.STRUCTURE_REFERENCES));
++    }
++
++    @Test
++    void laterStagesStillAdvanceNormally() {
++        assertSame(ChunkStatus.BIOMES, DisposableGenerationRegion.advancedStatus(
++                ChunkStatus.STRUCTURE_REFERENCES, ChunkStatus.BIOMES));
++        assertSame(ChunkStatus.FEATURES, DisposableGenerationRegion.advancedStatus(
++                ChunkStatus.CARVERS, ChunkStatus.FEATURES));
 +    }
 +}
 diff --git a/src/test/java/me/cortex/voxy/common/world/WorldUpdaterHierarchyTest.java b/src/test/java/me/cortex/voxy/common/world/WorldUpdaterHierarchyTest.java
