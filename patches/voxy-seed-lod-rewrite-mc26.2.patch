@@ -1,4 +1,4 @@
-From a5ed66ead7dccb84b41b68f5446b6dd13592ad4e Mon Sep 17 00:00:00 2001
+From 4978e673ea71c7fe52f2fcebd5957d726a958396 Mon Sep 17 00:00:00 2001
 From: Jayrock09 <133281095+Jayrock09@users.noreply.github.com>
 Date: Thu, 27 Aug 2026 15:25:14 -0500
 Subject: [PATCH] Rewrite Seed LOD around disposable real world generation
@@ -13,10 +13,10 @@ Subject: [PATCH] Rewrite Seed LOD around disposable real world generation
  .../voxy/client/config/VoxyConfigMenu.java    |  37 ++
  .../voxy/client/seedlod/SeedLodDebugHud.java  | 120 +++++
  .../seedlod/SeedLodFingerprintStore.java      | 107 ++++
- .../voxy/client/seedlod/SeedLodManager.java   | 500 ++++++++++++++++++
+ .../voxy/client/seedlod/SeedLodManager.java   | 509 ++++++++++++++++++
  .../voxy/client/seedlod/SeedLodMetrics.java   | 171 ++++++
  .../rewrite/DisposableChunkHolder.java        |  58 ++
- .../rewrite/DisposableGenerationRegion.java   | 172 ++++++
+ .../rewrite/DisposableGenerationRegion.java   | 187 +++++++
  .../rewrite/DisposableLightVolume.java        | 110 ++++
  .../rewrite/DisposableVoxyExtractor.java      | 102 ++++
  .../voxy/common/world/SaveLoadSystem3.java    |   6 +-
@@ -26,7 +26,7 @@ Subject: [PATCH] Rewrite Seed LOD around disposable real world generation
  .../seedlod/SeedLodFingerprintStoreTest.java  |  51 ++
  .../seedlod/SeedLodRewritePlanTest.java       |  26 +
  .../world/WorldUpdaterHierarchyTest.java      | 195 +++++++
- 22 files changed, 2245 insertions(+), 9 deletions(-)
+ 22 files changed, 2269 insertions(+), 9 deletions(-)
  create mode 100644 src/main/java/me/cortex/voxy/client/seedlod/SeedLodDebugHud.java
  create mode 100644 src/main/java/me/cortex/voxy/client/seedlod/SeedLodFingerprintStore.java
  create mode 100644 src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java
@@ -71,7 +71,7 @@ index 66ee48a1..b9b2efc5 100644
 \ No newline at end of file
 +}*/
 diff --git a/gradle.properties b/gradle.properties
-index a25ea295..74c433ec 100644
+index a25ea295..415b6d1f 100644
 --- a/gradle.properties
 +++ b/gradle.properties
 @@ -29,6 +29,6 @@ nvidium_version=0.4.3-beta13-26.1
@@ -79,7 +79,7 @@ index a25ea295..74c433ec 100644
  
  # Mod Properties
 -mod_version = 0.2.19-beta
-+mod_version = 0.2.19-beta-rewrite.1
++mod_version = 0.2.19-beta-rewrite.2
  maven_group = me.cortex
 -archives_base_name = voxy
 \ No newline at end of file
@@ -431,7 +431,7 @@ index 00000000..8ec11884
 +}
 diff --git a/src/main/java/me/cortex/voxy/client/seedlod/SeedLodFingerprintStore.java b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodFingerprintStore.java
 new file mode 100644
-index 00000000..cec3ac52
+index 00000000..2a31b529
 --- /dev/null
 +++ b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodFingerprintStore.java
 @@ -0,0 +1,107 @@
@@ -454,7 +454,7 @@ index 00000000..cec3ac52
 +/** Small sidecar used to detect world-generator changes without touching real Voxy data. */
 +public final class SeedLodFingerprintStore {
 +    static final int FORMAT_VERSION = 1;
-+    static final int PREDICTION_VERSION = 100;
++    static final int PREDICTION_VERSION = 101;
 +
 +    private SeedLodFingerprintStore() {}
 +
@@ -544,10 +544,10 @@ index 00000000..cec3ac52
 +}
 diff --git a/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java
 new file mode 100644
-index 00000000..ccbc5846
+index 00000000..2fcda9ab
 --- /dev/null
 +++ b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java
-@@ -0,0 +1,500 @@
+@@ -0,0 +1,509 @@
 +package me.cortex.voxy.client.seedlod;
 +
 +import com.mojang.serialization.JsonOps;
@@ -593,6 +593,7 @@ index 00000000..ccbc5846
 +    private static final int MAX_ENQUEUE_PER_TICK = 2;
 +    private static final int RECENTER_DISTANCE_CHUNKS = 4;
 +    private static final int TELEPORT_DISTANCE_CHUNKS = 32;
++    private static final long FAILURE_RETRY_NANOS = TimeUnit.SECONDS.toNanos(5);
 +    private static final long PREDICTION_BIT = 1L;
 +
 +    private final Path storageBasePath;
@@ -601,6 +602,7 @@ index 00000000..ccbc5846
 +    private final AtomicLong sequence = new AtomicLong();
 +    private final Set<WorkKey> running = ConcurrentHashMap.newKeySet();
 +    private final ConcurrentHashMap<WorkKey, WorkPlan> planned = new ConcurrentHashMap<>();
++    private final ConcurrentHashMap<WorkKey, Long> retryAfter = new ConcurrentHashMap<>();
 +    private final Set<WorkKey> completed = ConcurrentHashMap.newKeySet();
 +
 +    private volatile Binding binding;
@@ -699,6 +701,7 @@ index 00000000..ccbc5846
 +        this.binding = current;
 +        this.completed.clear();
 +        this.planned.clear();
++        this.retryAfter.clear();
 +        this.running.clear();
 +        this.scanInitialized = false;
 +        this.configuredRadius = 0;
@@ -734,6 +737,8 @@ index 00000000..ccbc5846
 +                if (this.completed.contains(key)) continue;
 +                ringDone = false;
 +                if (this.planned.containsKey(key)) continue;
++                Long retryAt = this.retryAfter.get(key);
++                if (retryAt != null && System.nanoTime() < retryAt) continue;
 +                if (this.pendingTasks.get() >= MAX_PENDING_TASKS
 +                        || enqueued >= MAX_ENQUEUE_PER_TICK) return;
 +
@@ -770,10 +775,12 @@ index 00000000..ccbc5846
 +                } finally {
 +                    if (acquired && taskBinding.world.isLive()) taskBinding.world.releaseRef();
 +                    if (successful) {
++                        this.retryAfter.remove(key);
 +                        this.completed.add(key);
 +                        taskBinding.metrics.recordJobFinished(
 +                                (long) workSizeChunks(key.outputLevel) * workSizeChunks(key.outputLevel));
 +                    } else if (failed) {
++                        this.retryAfter.put(key, System.nanoTime() + FAILURE_RETRY_NANOS);
 +                        taskBinding.metrics.recordJobFailed();
 +                    } else {
 +                        taskBinding.metrics.recordJobCancelled(
@@ -843,6 +850,7 @@ index 00000000..ccbc5846
 +            this.generation++;
 +            this.planned.clear();
 +            this.completed.clear();
++            this.retryAfter.clear();
 +        }
 +    }
 +
@@ -958,6 +966,7 @@ index 00000000..ccbc5846
 +        this.executor.shutdownNow();
 +        this.planned.clear();
 +        this.completed.clear();
++        this.retryAfter.clear();
 +        this.running.clear();
 +    }
 +
@@ -1291,10 +1300,10 @@ index 00000000..20eaaf7b
 +}
 diff --git a/src/main/java/me/cortex/voxy/client/seedlod/rewrite/DisposableGenerationRegion.java b/src/main/java/me/cortex/voxy/client/seedlod/rewrite/DisposableGenerationRegion.java
 new file mode 100644
-index 00000000..b7a6dada
+index 00000000..ba519f70
 --- /dev/null
 +++ b/src/main/java/me/cortex/voxy/client/seedlod/rewrite/DisposableGenerationRegion.java
-@@ -0,0 +1,172 @@
+@@ -0,0 +1,187 @@
 +package me.cortex.voxy.client.seedlod.rewrite;
 +
 +import net.minecraft.server.level.ServerLevel;
@@ -1363,11 +1372,7 @@ index 00000000..b7a6dada
 +        long structureNanos = System.nanoTime() - structureStarted;
 +
 +        long terrainStarted = System.nanoTime();
-+        forEachSquare(originX - FEATURE_HALO, originZ - FEATURE_HALO,
-+                targetChunks + FEATURE_HALO * 2, (chunkX, chunkZ) -> {
-+                    ChunkAccess chunk = cache.get(chunkX, chunkZ).getLatestChunk();
-+                    this.generateTerrain(cache, chunk);
-+                });
++        this.generateTerrain(cache, originX, originZ, targetChunks);
 +        long terrainNanos = System.nanoTime() - terrainStarted;
 +
 +        long decorationStarted = System.nanoTime();
@@ -1399,21 +1404,40 @@ index 00000000..b7a6dada
 +    }
 +
 +    private void generateTerrain(StaticCache2D<DisposableChunkHolder> cache,
-+                                 ChunkAccess chunk) {
++                                 int targetOriginX, int targetOriginZ, int targetSize) {
 +        StructureManager structures = this.level.structureManager();
-+        this.generator.createBiomes(this.randomState, Blender.empty(), structures, chunk).join();
-+        setStatus(chunk, ChunkStatus.BIOMES);
-+        this.generator.fillFromNoise(Blender.empty(), this.randomState, structures, chunk).join();
-+        setStatus(chunk, ChunkStatus.NOISE);
-+
-+        WorldGenRegion surfaceRegion = region(cache, ChunkStatus.SURFACE, chunk);
-+        this.generator.buildSurface(surfaceRegion,
-+                structures.forWorldGenRegion(surfaceRegion), this.randomState, chunk);
-+        setStatus(chunk, ChunkStatus.SURFACE);
-+        WorldGenRegion carverRegion = region(cache, ChunkStatus.CARVERS, chunk);
-+        this.generator.applyCarvers(carverRegion, this.level.getSeed(), this.randomState,
-+                carverRegion.getBiomeManager(), structures.forWorldGenRegion(carverRegion), chunk);
-+        setStatus(chunk, ChunkStatus.CARVERS);
++        // Minecraft generation is stage ordered across a neighborhood. Surface
++        // rules may query a neighboring biome, so completing one chunk through
++        // CARVERS before its neighbors have BIOMES is invalid.
++        int biomeHalo = FEATURE_HALO + 1;
++        forEachSquare(targetOriginX - biomeHalo, targetOriginZ - biomeHalo,
++                targetSize + biomeHalo * 2, (chunkX, chunkZ) -> {
++            ChunkAccess chunk = cache.get(chunkX, chunkZ).getLatestChunk();
++            this.generator.createBiomes(this.randomState, Blender.empty(), structures, chunk).join();
++            setStatus(chunk, ChunkStatus.BIOMES);
++        });
++        int terrainOriginX = targetOriginX - FEATURE_HALO;
++        int terrainOriginZ = targetOriginZ - FEATURE_HALO;
++        int terrainSize = targetSize + FEATURE_HALO * 2;
++        forEachSquare(terrainOriginX, terrainOriginZ, terrainSize, (chunkX, chunkZ) -> {
++            ChunkAccess chunk = cache.get(chunkX, chunkZ).getLatestChunk();
++            this.generator.fillFromNoise(Blender.empty(), this.randomState, structures, chunk).join();
++            setStatus(chunk, ChunkStatus.NOISE);
++        });
++        forEachSquare(terrainOriginX, terrainOriginZ, terrainSize, (chunkX, chunkZ) -> {
++            ChunkAccess chunk = cache.get(chunkX, chunkZ).getLatestChunk();
++            WorldGenRegion surfaceRegion = region(cache, ChunkStatus.SURFACE, chunk);
++            this.generator.buildSurface(surfaceRegion,
++                    structures.forWorldGenRegion(surfaceRegion), this.randomState, chunk);
++            setStatus(chunk, ChunkStatus.SURFACE);
++        });
++        forEachSquare(terrainOriginX, terrainOriginZ, terrainSize, (chunkX, chunkZ) -> {
++            ChunkAccess chunk = cache.get(chunkX, chunkZ).getLatestChunk();
++            WorldGenRegion carverRegion = region(cache, ChunkStatus.CARVERS, chunk);
++            this.generator.applyCarvers(carverRegion, this.level.getSeed(), this.randomState,
++                    carverRegion.getBiomeManager(), structures.forWorldGenRegion(carverRegion), chunk);
++            setStatus(chunk, ChunkStatus.CARVERS);
++        });
 +    }
 +
 +    private void createStructureReferences(StaticCache2D<DisposableChunkHolder> cache,

@@ -1,5 +1,13 @@
 # Rewrite changelog
 
+## rewrite.2
+
+- Fixed the first in-game failure, `Asking for biomes before we have biomes`.
+- Changed disposable terrain generation to finish each status across the required region before advancing to the next status.
+- Added an extra biome halo for surface rules, carvers, and decoration that query neighboring chunks.
+- Added a five-second failed-region retry delay to prevent worker and chat log storms.
+- Bumped the prediction schema so output from the broken pipeline is treated as stale.
+
 ## rewrite.1
 
 - Replaced sampled terrain reconstruction with disposable real Minecraft world generation.
