@@ -1,5 +1,12 @@
 # Rewrite changelog
 
+## rewrite.3
+
+- Fixed feature placement failing when a placement modifier checked the biome beyond the previous two-chunk decoration halo.
+- Primed biome containers across the complete disposable structure region before any terrain or feature stages run.
+- Kept noise terrain, surface generation, carvers, decoration, and lighting limited to their required generation halos.
+- Bumped the prediction schema to `102` so incomplete rewrite.2 output is treated as stale.
+
 ## rewrite.2
 
 - Fixed the first in-game failure, `Asking for biomes before we have biomes`.

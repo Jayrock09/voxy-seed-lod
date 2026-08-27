@@ -1,4 +1,4 @@
-From 4978e673ea71c7fe52f2fcebd5957d726a958396 Mon Sep 17 00:00:00 2001
+From 0d31bfb8a71bd40b0c3b091355a568fd6e6df345 Mon Sep 17 00:00:00 2001
 From: Jayrock09 <133281095+Jayrock09@users.noreply.github.com>
 Date: Thu, 27 Aug 2026 15:25:14 -0500
 Subject: [PATCH] Rewrite Seed LOD around disposable real world generation
@@ -16,7 +16,7 @@ Subject: [PATCH] Rewrite Seed LOD around disposable real world generation
  .../voxy/client/seedlod/SeedLodManager.java   | 509 ++++++++++++++++++
  .../voxy/client/seedlod/SeedLodMetrics.java   | 171 ++++++
  .../rewrite/DisposableChunkHolder.java        |  58 ++
- .../rewrite/DisposableGenerationRegion.java   | 187 +++++++
+ .../rewrite/DisposableGenerationRegion.java   | 188 +++++++
  .../rewrite/DisposableLightVolume.java        | 110 ++++
  .../rewrite/DisposableVoxyExtractor.java      | 102 ++++
  .../voxy/common/world/SaveLoadSystem3.java    |   6 +-
@@ -26,7 +26,7 @@ Subject: [PATCH] Rewrite Seed LOD around disposable real world generation
  .../seedlod/SeedLodFingerprintStoreTest.java  |  51 ++
  .../seedlod/SeedLodRewritePlanTest.java       |  26 +
  .../world/WorldUpdaterHierarchyTest.java      | 195 +++++++
- 22 files changed, 2269 insertions(+), 9 deletions(-)
+ 22 files changed, 2270 insertions(+), 9 deletions(-)
  create mode 100644 src/main/java/me/cortex/voxy/client/seedlod/SeedLodDebugHud.java
  create mode 100644 src/main/java/me/cortex/voxy/client/seedlod/SeedLodFingerprintStore.java
  create mode 100644 src/main/java/me/cortex/voxy/client/seedlod/SeedLodManager.java
@@ -71,7 +71,7 @@ index 66ee48a1..b9b2efc5 100644
 \ No newline at end of file
 +}*/
 diff --git a/gradle.properties b/gradle.properties
-index a25ea295..415b6d1f 100644
+index a25ea295..e1d0efcf 100644
 --- a/gradle.properties
 +++ b/gradle.properties
 @@ -29,6 +29,6 @@ nvidium_version=0.4.3-beta13-26.1
@@ -79,7 +79,7 @@ index a25ea295..415b6d1f 100644
  
  # Mod Properties
 -mod_version = 0.2.19-beta
-+mod_version = 0.2.19-beta-rewrite.2
++mod_version = 0.2.19-beta-rewrite.3
  maven_group = me.cortex
 -archives_base_name = voxy
 \ No newline at end of file
@@ -431,7 +431,7 @@ index 00000000..8ec11884
 +}
 diff --git a/src/main/java/me/cortex/voxy/client/seedlod/SeedLodFingerprintStore.java b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodFingerprintStore.java
 new file mode 100644
-index 00000000..2a31b529
+index 00000000..ab317b44
 --- /dev/null
 +++ b/src/main/java/me/cortex/voxy/client/seedlod/SeedLodFingerprintStore.java
 @@ -0,0 +1,107 @@
@@ -454,7 +454,7 @@ index 00000000..2a31b529
 +/** Small sidecar used to detect world-generator changes without touching real Voxy data. */
 +public final class SeedLodFingerprintStore {
 +    static final int FORMAT_VERSION = 1;
-+    static final int PREDICTION_VERSION = 101;
++    static final int PREDICTION_VERSION = 102;
 +
 +    private SeedLodFingerprintStore() {}
 +
@@ -1300,10 +1300,10 @@ index 00000000..20eaaf7b
 +}
 diff --git a/src/main/java/me/cortex/voxy/client/seedlod/rewrite/DisposableGenerationRegion.java b/src/main/java/me/cortex/voxy/client/seedlod/rewrite/DisposableGenerationRegion.java
 new file mode 100644
-index 00000000..ba519f70
+index 00000000..3f848a9b
 --- /dev/null
 +++ b/src/main/java/me/cortex/voxy/client/seedlod/rewrite/DisposableGenerationRegion.java
-@@ -0,0 +1,187 @@
+@@ -0,0 +1,188 @@
 +package me.cortex.voxy.client.seedlod.rewrite;
 +
 +import net.minecraft.server.level.ServerLevel;
@@ -1409,10 +1409,11 @@ index 00000000..ba519f70
 +        // Minecraft generation is stage ordered across a neighborhood. Surface
 +        // rules may query a neighboring biome, so completing one chunk through
 +        // CARVERS before its neighbors have BIOMES is invalid.
-+        int biomeHalo = FEATURE_HALO + 1;
-+        forEachSquare(targetOriginX - biomeHalo, targetOriginZ - biomeHalo,
-+                targetSize + biomeHalo * 2, (chunkX, chunkZ) -> {
-+            ChunkAccess chunk = cache.get(chunkX, chunkZ).getLatestChunk();
++        // Placement modifiers can move their final biome check farther than a
++        // one or two chunk feature halo. Every holder is already required for
++        // structure discovery, so prime its cheap biome container as well.
++        cache.forEach(holder -> {
++            ChunkAccess chunk = holder.getLatestChunk();
 +            this.generator.createBiomes(this.randomState, Blender.empty(), structures, chunk).join();
 +            setStatus(chunk, ChunkStatus.BIOMES);
 +        });
